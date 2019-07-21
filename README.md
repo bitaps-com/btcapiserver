@@ -1,5 +1,5 @@
 
-<img src="doc/btcapi.png" width="300">
+<img src="doc/btcapi.png" width="250">
 
 
 ## BTCAPI Server
