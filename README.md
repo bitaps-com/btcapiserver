@@ -1,2 +1,4 @@
-# btcapiserver
-Bitcoin API server
+<img src="doc/btcapi.png" width="100">
+
+
+# BTCAPI server
