@@ -1,0 +1,38 @@
+version: '3.3'
+
+services:
+
+    btcapi-server-postgres:
+        build: ./postgres
+        container_name: btcapi-server-postgres
+        command: postgres -c config_file=/etc/postgres.conf
+        volumes:
+            - ./data/postgres/:/var/lib/postgresql/data/
+            - ./data/socket/:/var/run/postgresql/
+            - ./config/postgres.conf:/etc/postgres.conf
+        stdin_open: true
+        tty: true
+
+    btcapi-engine:
+        build: ./app
+        container_name: btcapi-engine
+        volumes:
+            - ./config/:/config/
+            - ./data/socket/:/var/run/postgresql/
+        depends_on:
+            - btcapi-server-postgres
+        network_mode: "host"
+        stdin_open: true
+        tty: true
+
+    btcapi-server:
+        build: ./api
+        container_name: btcapi-server
+        volumes:
+            - ./config/:/config/
+            - ./data/socket/:/var/run/postgresql/
+        depends_on:
+            - btcapi-server-postgres
+        network_mode: "host"
+        stdin_open: true
+        tty: true

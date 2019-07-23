@@ -1,0 +1,40 @@
+[POSTGRESQL]
+
+dsn = postgres://postgres:test@/test
+pool_threads = 100
+
+
+[CONNECTOR]
+
+zeromq = tcp://127.0.0.1:8900
+rpc = http://bitaps:testnetWfefeefsSWd2@127.0.0.1:8332
+log_level = debug
+
+[SYNCHRONIZATION]
+
+block_preload_workers = 4
+block_preload_batch_size = 50000000
+utxo_cache_size = 3000000
+
+
+[SERVER]
+
+log_level = debug
+
+[OPTIONS]
+
+transaction = on
+merkle_proof = on
+transaction_history = on
+address_state = on
+address_timeline = on
+blockchain_analytica = off
+
+deterministic_wallet = off
+nodes_discovery = off
+transaction_fee_analytica = off
+mempool_analytica = off
+market_data = off
+
+flush_mempool_on_start = off
+
