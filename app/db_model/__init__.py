@@ -1,4 +1,5 @@
 from pybtc import rh2s
+import json
 
 async def create_db_model(app, conn):
 
@@ -6,35 +7,40 @@ async def create_db_model(app, conn):
 
     level = await conn.fetchval("SHOW TRANSACTION ISOLATION LEVEL;")
     if level != "repeatable read":
-        raise Exception("Postgres repeatable read isolation "
-                        "level required! current isolation level is %s" % level)
+        raise Exception("Postgres repeatable read isolation level required! current isolation level is %s" % level)
     await conn.execute(open("./db_model/sql/schema.sql", "r", encoding='utf-8').read().replace("\n",""))
 
 
+    # blocks data
+
+    if app.blocks_data:
+        await conn.execute(open("./db_model/sql/block.sql", "r", encoding='utf-8').read().replace("\n", ""))
+        await conn.execute("INSERT INTO service (name,value) VALUES ('blocks_data','1') ON CONFLICT(name) DO NOTHING;")
+    else:
+        await conn.execute("""
+                               INSERT INTO service (name, value) VALUES ('blocks_data', '0') 
+                               ON CONFLICT(name) DO NOTHING;
+                               """)
+
+    m = await conn.fetchval("SELECT value FROM service WHERE name ='blocks_data' LIMIT 1;")
+    app.log.info("Option blocks_data = %s" % m)
+
+    if bool(int(m)) !=  app.blocks_data:
+        app.log.critical("blocks_data option not match db structure; you should drop db and recreate it")
+        raise Exception("DB structure invalid")
 
     # transaction
 
     if app.transaction:
-        await conn.execute(open("./db_model/sql/transaction.sql", "r", encoding='utf-8').read().replace("\n", ""))
-        await conn.execute("""
-                           INSERT INTO service (name, value) VALUES ('transaction', '1')  
-                           ON CONFLICT(name) DO NOTHING;
-                           """)
-        app.transaction_start_block = await conn.fetchval("SELECT pointer "
-                                                          "FROM transaction ORDER BY pointer DESC LIMIT 1;")
-        app.transaction_start_block = 0 if app.transaction_start_block is None else app.transaction_start_block >> 39
+        await conn.execute("INSERT INTO service (name,value) VALUES ('transaction','1') ON CONFLICT(name) DO NOTHING;")
     else:
-        await conn.execute("""
-                           INSERT INTO service (name, value) VALUES ('transaction', '0') 
-                           ON CONFLICT(name) DO NOTHING;
-                           """)
+        await conn.execute("INSERT INTO service (name,value) VALUES ('transaction','0') ON CONFLICT(name) DO NOTHING;")
 
     m = await conn.fetchval("SELECT value FROM service WHERE name ='transaction' LIMIT 1;")
     app.log.info("Option transaction = %s" % m)
 
     if bool(int(m)) !=  app.transaction:
-        app.log.critical("transaction option not match db structure; "
-                         "you should drop db and recreate it")
+        app.log.critical("transaction option not match db structure; you should drop db and recreate it")
         raise Exception("DB structure invalid")
 
 
@@ -177,6 +183,140 @@ async def create_db_model(app, conn):
                                ON CONFLICT(name) DO NOTHING;
                                """)
 
+        # b = await conn.fetchval("SELECT blockchain FROM blocks_stat ORDER BY height DESC LIMIT 1;")
+        # if b is not None:
+        #     app.blockchain_stat = json.loads(b)
+        # else:
+        #     app.blockchain_stat = {
+        #         "outputs": {"count": {"total": 0},                                  # total outputs count
+        #                                                                             # What is the total quantity of
+        #                                                                             # coins in bitcoin blockchain?
+        #
+        #                     "amount": {"min": {"pointer": 0,                        # output with minimal amount
+        #                                        "value": 0},                         # What is the minimum amount of a coins?
+        #
+        #                                "max": {"pointer": 0,                        # output with maximal amount
+        #                                        "value": 0},                         # What is the maximal amount of a coins?
+        #
+        #                                "total": 0,                                  # total amount of all outputs
+        #
+        #                                "map": {"count": dict(),                     # quantity distribution by amount
+        #                                                                             # How many coins exceed 1 BTC?
+        #
+        #                                        "amount": dict()}                    # amounts distribution by amount
+        #                                                                             # What is the total amount of all coins
+        #                                                                             # exceeding 10 BTC?
+        #                                },
+        #
+        #                     "type": {"map": {"count": dict(),                       # quantity distribution by type
+        #                                                                             # How many P2SH coins?
+        #
+        #                                      "amount": dict(),                      # amounts distribution by type
+        #                                                                             # What is the total amount of
+        #                                                                             # all P2PKH coins?
+        #
+        #                                      "size": dict()}},                      # sizes distribution by type
+        #                                                                             # What is the total size
+        #                                                                             # of all P2PKH coins?
+        #
+        #                     "age": {"map": {"count": dict(),                        # distribution of counts by age
+        #                                                                             # How many coins older then 1 year?
+        #
+        #                                     "amount": dict(),                       # distribution of amount by age
+        #                                                                             # What amount of coins older then 1 month?
+        #
+        #                                     "type": dict()                          # distribution of counts by type
+        #                                                                             # How many P2SH coins older then 1 year?
+        #                                     }}
+        #
+        #                     },
+        #
+        #         "inputs": {"count": {"total": 0},                                   # total inputs count
+        #                                                                             # What is the total quantity of
+        #                                                                             # spent coins in bitcoin blockchain?
+        #
+        #                    "amount": {"min": {"pointer": 0,                         # input with minimal amount
+        #                                       "value": 0},                          # What is the smallest coin spent?
+        #
+        #                               "max": {"pointer": 0,                         # input with maximal amount
+        #                                       "value": 0},                          # what is the greatest coin spent?
+        #
+        #                               "total": 0,                                   # total amount of all inputs
+        #                                                                             # What is the total amount of
+        #                                                                             # all spent coins?
+        #
+        #                               "map": {"count": dict(),                      # quantity distribution by amount
+        #                                                                             # How many spent coins exceed 1 BTC?
+        #
+        #                                       "amount": dict()}                     # amounts distribution by amount
+        #                                                                             # What is the total amount of
+        #                                                                             #  all spent coins exceeding 10 BTC?
+        #                               },
+        #                    "type": {
+        #                        "map": {"count": dict(),                             # quantity distribution by type
+        #                                                                             # How many P2SH  spent coins?
+        #
+        #                                "amount": dict(),                            # amounts distribution by type
+        #                                                                             # What is the total amount
+        #                                                                             # of all P2PKH spent?
+        #
+        #                                "size": dict()                               # sizes distribution by type
+        #                                                                             # What is the total
+        #                                                                             # size of all P2PKH spent?
+        #
+        #                                }},
+        #
+        #
+        #                    # P2SH redeem script statistics
+        #                    "P2SH": {
+        #                        "type": {"map": {"count": dict(),
+        #                                         "amount": dict(),
+        #                                         "size": dict()}
+        #                                 }
+        #                    },
+        #
+        #                    # P2WSH redeem script statistics
+        #                    "P2WSH": {
+        #                        "type": {"map": {"count": dict(),
+        #                                         "amount": dict(),
+        #                                         "size": dict()}
+        #                                 }
+        #                    }
+        #                    },
+        #
+        #         "transactions": {"count": {"total": 0},
+        #
+        #                          "amount": {"min": {"pointer": 0,
+        #                                             "value": 0},
+        #
+        #                                     "max": {"pointer": 0,
+        #                                             "value": 0},
+        #
+        #                                     "map": {"count": dict(),
+        #                                             "amount": dict(),
+        #                                             "size": dict()},
+        #                                     "total": 0},
+        #                          "size": {"min": {"pointer": 0, "value": 0},
+        #                                   "max": {"pointer": 0, "value": 0},
+        #                                   "total": {"size": 0, "bSize": 0, "vSize": 0},
+        #                                   "map": {"count": dict(), "amount": dict()}},
+        #
+        #                          "type": {"map": {"count": dict(), "size": dict(),
+        #                                           "amount": dict()}},
+        #
+        #                          "fee": {"min": {"pointer": 0, "value": 0},
+        #                                  "max": {"pointer": 0, "value": 0},
+        #                                  "total": 0}
+        #                          }
+        #          }
+
+        if app.address_state:
+            app.blockchain_address_sate = {
+
+            }
+
+
+
     else:
 
         await conn.execute("""
@@ -190,6 +330,9 @@ async def create_db_model(app, conn):
     if int(m) == 1 and not app.blockchain_analytica or app.blockchain_analytica and int(m) == 0:
         app.log.critical("blockchain_analytica config option not match db structure; you should drop db and recreate it.")
         raise Exception("DB structure invalid")
+
+
+
 
     # mempool_analytica
 
@@ -224,11 +367,9 @@ async def create_db_model(app, conn):
 
     app.block_start_block = await conn.fetchval("SELECT height FROM blocks ORDER BY height DESC LIMIT 1;")
 
-    app.block_start_block = 0 if app.block_start_block is None else app.block_start_block
+    app.block_start_block = -1 if app.block_start_block is None else app.block_start_block
 
-    app.start_checkpoint = min(app.transaction_map_start_block,
-                               app.transaction_start_block,
-                               app.block_start_block)
+    app.start_checkpoint = app.block_start_block
 
 
     if "flush_mempool_on_start" in app.config["OPTIONS"]:

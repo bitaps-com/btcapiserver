@@ -14,10 +14,11 @@ from multiprocessing import Process
 from synchronization import SynchronizationWorker
 from modules.address_state import AddressStateSync
 import pybtc
-from pybtc import int_to_c_int
-from pybtc import s2rh, rh2s, merkle_tree, merkle_proof
+from collections import deque
+from pybtc import int_to_c_int, MRU
+from pybtc import s2rh, rh2s, merkle_tree, merkle_proof, parse_script
 import db_model
-import os
+import os, json, sys
 from utils import (pipe_get_msg,
                    pipe_sent_msg,
                    get_pipe_reader,
@@ -25,6 +26,9 @@ from utils import (pipe_get_msg,
                    log_level_map,
                    deserialize_address_data,
                    serialize_address_data)
+from concurrent.futures import ThreadPoolExecutor
+import datetime
+from math import *
 
 import uvloop
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -35,7 +39,7 @@ class App:
         self.loop = loop
         self.log = logger
         self.config = config
-
+        self.blockchain_stat = None
         # options
 
         self.transaction = True if config["OPTIONS"]["transaction"] == "on" else False
@@ -43,6 +47,7 @@ class App:
         self.address_state = True if config["OPTIONS"]["address_state"] == "on" else False
         self.address_timeline = True if config["OPTIONS"]["address_timeline"] == "on" else False
         self.blockchain_analytica = True if config["OPTIONS"]["blockchain_analytica"] == "on" else False
+        self.blocks_data = True if config["OPTIONS"]["blocks_data"] == "on" else False
         self.transaction_history = True if config["OPTIONS"]["transaction_history"] == "on" else False
 
         self.block_preload_workers = int(config["SYNCHRONIZATION"]["block_preload_workers"])
@@ -51,9 +56,24 @@ class App:
         self.psql_dsn = config["POSTGRESQL"]["dsn"]
         self.psql_threads = int(config["POSTGRESQL"]["server_threads"])
         self.chain_tail = []
+        self.block_map_timestamp = dict()
         self.shutdown = False
+        self.force_shutdown = False
+        self.executor = ThreadPoolExecutor(max_workers=5)
         setproctitle('btcapi engine')
 
+        self.headers = deque()
+        self.headers_batches = MRU()
+        self.batch_limit = 5000
+        self.transactions = deque()
+        self.transactions_batches = MRU()
+
+        self.tx_map = deque()
+        self.tx_map_batches = MRU()
+        self.stxo_batches = MRU()
+        self.blocks_stat_batches = MRU()
+        self.stxo = deque()
+        self.blocks_stat = deque()
 
         self.db_pool = None
         self.rpc = None
@@ -63,7 +83,6 @@ class App:
         self.sync_worker_reader = None
 
         self.transaction_map_start_block = 0
-        self.transaction_start_block = 0
         self.block_start_block = 0
         self.start_checkpoint = 0
         self.address_state_block = 0
@@ -78,6 +97,117 @@ class App:
         self.processes = []
         self.tasks = []
         self.log.info("BTCAPI server starting ...")
+
+        self.blockchain_stat = {
+                                  "oCountTotal": 0,  # total outputs count
+                                  # What is the total quantity of
+                                  # coins in bitcoin blockchain?
+
+                                  "oAmountMinPointer": 0,  # output with minimal amount
+                                  "oAmountMinValue": 0,  # What is the minimum amount of a coins?
+
+                                  "oAmountMaxPointer": 0,  # output with maximal amount
+                                  "oAmountMaxValue": 0,  # What is the maximal amount of a coins?
+
+                                  "oAmountTotal": 0,  # total amount of all outputs
+
+                                  "oAmountMapCount": dict(),  # quantity distribution by amount
+                                  # How many coins exceed 1 BTC?
+
+                                  "oAmountMapAmount": dict(),  # amounts distribution by amount
+                                  # What is the total amount of all coins
+                                  # exceeding 10 BTC?
+
+                                  "oTypeMapCount": dict(),  # quantity distribution by type
+                                  # How many P2SH coins?
+
+                                  "oTypeMapAmount": dict(),  # amounts distribution by type
+                                  # What is the total amount of
+                                  # all P2PKH coins?
+
+                                  "oTypeMapSize": dict(),  # sizes distribution by type
+                                  # What is the total size
+                                  # of all P2PKH coins?
+
+                                  "oAgeMapCount": dict(),  # distribution of counts by age
+                                  # How many coins older then 1 year?
+
+                                  "oAgeMapAmount": dict(),  # distribution of amount by age
+                                  # What amount of coins older then 1 month?
+
+                                  "oAgeMapType": dict(),  # distribution of counts by type
+                                  # How many P2SH coins older then 1 year?
+
+                                  "iCountTotal": 0,  # total inputs count
+                                  # What is the total quantity of
+                                  # spent coins in bitcoin blockchain?
+
+                                  "iAmountMinPointer": 0,  # input with minimal amount
+                                  "iAmountMinValue": 0,  # What is the smallest coin spent?
+
+                                  "iAmountMaxPointer": 0,  # input with maximal amount
+                                  "iAmountMaxValue": 0,  # what is the greatest coin spent?
+
+                                  "iAmountTotal": 0,  # total amount of all inputs
+                                    # What is the total amount of
+                                    # all spent coins?
+
+                                  "iAmountMapCount": dict(),  # quantity distribution by amount
+                                    # How many spent coins exceed 1 BTC?
+
+                                  "iAmountMapAmount": dict(),  # amounts distribution by amount
+                                    # What is the total amount of
+                                    #  all spent coins exceeding 10 BTC?
+                                  "iTypeMapCount": dict(),  # quantity distribution by type
+                                    # How many P2SH  spent coins?
+
+                                  "iTypeMapAmount": dict(),  # amounts distribution by type
+                                    # What is the total amount
+                                    # of all P2PKH spent?
+
+                                  "iTypeMapSize": dict(),  # sizes distribution by type
+                                    # What is the total
+                                    # size of all P2PKH spent?
+
+                                    # P2SH redeem script statistics
+                                  "iP2SHtypeMapCount": dict(),
+                                  "iP2SHtypeMapAmount": dict(),
+                                  "iP2SHtypeMapSize": dict(),
+
+                                    # P2WSH redeem script statistics
+                                  "iP2WSHtypeMapCount": dict(),
+                                  "iP2WSHtypeMapAmount": dict(),
+                                  "iP2WSHtypeMapSize": dict(),
+
+                                 "txCountTotal": 0,
+                                    "txAmountMinPointer": 0,
+                                    "txAmountMinValue": 0,
+                                    "txAmountMaxPointer": 0,
+                                    "txAmountMaxValue": 0,
+                                    "txAmountMapCount": dict(),
+                                    "txAmountMapAmount": dict(),
+                                    "txAmountMapSize": dict(),
+                                    "txAmountTotal": 0,
+
+                                    "txSizeMinPointer": 0,
+                                    "txSizeMinValue": 0,
+                                    "txSizeMaxPointer": 0,
+                                    "txSizeMaxValue": 0,
+                                    "txSizeTotal": 0,
+                                    "txVSizeTotal": 0,
+                                    "txBSizeTotal": 0,
+
+                                    "txSizeMapCount": dict(),
+                                    "txSizeMapAmount": dict(),
+
+                                    "txTypeMapCount": dict(),
+                                    "txTypeMapSize": dict(),
+                                    "txTypeMapAmount": dict(),
+                                    "feeMinPointer": 0,
+                                    "feeMinValue": 0,
+                                    "feeMaxPointer": 0,
+                                    "feeMaxValue": 0,
+                                    "feeTotal": 0}
 
 
         # remap SIGINT and SIGTERM
@@ -105,9 +235,13 @@ class App:
                                              rpc_batch_limit=100,
                                              db_type="postgresql",
                                              db=self.psql_dsn,
+                                             merkle_proof=self.merkle_proof,
+                                             tx_map=self.transaction_history,
+                                             analytica=self.blockchain_analytica,
                                              mempool_tx=True,
                                              chain_tail=self.chain_tail,
                                              block_timeout=300,
+                                             deep_sync_limit=100,
                                              last_block_height=self.start_checkpoint,
                                              block_cache_workers = self.block_preload_workers,
                                              block_batch_handler=self.block_batch_handler,
@@ -118,43 +252,384 @@ class App:
                                              block_handler=self.new_block_handler,
                                              block_preload_batch_size_limit = self.block_preload_batch_size_limit,
                                              app_proc_title="btcapi engine")
-
-            await self.connector.connected
-            self.log.info("Bitcoind connected")
-            bootstrap_height = self.connector.node_last_block - 100
-
-            if self.address_state:
-                self.processes.append(Process(target=AddressStateSync, args=(self.psql_dsn,
-                                                                             bootstrap_height,
-                                                                             self.address_timeline,
-                                                                             self.log)))
-                [p.start() for p in self.processes]
-                self.tasks.append(self.loop.create_task(self.address_state_processor()))
-
+        except asyncio.CancelledError:
+            pass
         except Exception as err:
             self.log.warning("Start failed: %s" % err)
             print(traceback.format_exc())
             self.log.warning("Reconnecting ...")
             await asyncio.sleep(3)
             self.loop.create_task(self.start(config, connector_logger))
+            return
+        try:
+            await self.connector.connected
+        except Exception as err:
+            self.log.critical("Bitcoind connection failed: %s" % str(err))
+            self.terminate(None,None)
+            return
+
+        self.log.info("Bitcoind connected")
+        bootstrap_height = self.connector.node_last_block - 100
+
+        if self.address_state:
+            self.processes.append(Process(target=AddressStateSync, args=(self.psql_dsn,
+                                                                         bootstrap_height,
+                                                                         self.address_timeline,
+                                                                         self.blockchain_analytica,
+                                                                         self.log)))
+            [p.start() for p in self.processes]
+            self.tasks.append(self.loop.create_task(self.address_state_processor()))
+
 
 
     async def flush_app_caches_handler(self, height):
-        if self.sync_worker_writer:
-            pipe_sent_msg(b'flush', pickle.dumps(height), self.sync_worker_writer)
-            await self.sync_worker_writer.drain()
-        # create indexes
+        if self.tx_map:
+            self.tx_map_batches[height] = self.tx_map
+            self.tx_map = deque()
+        if self.stxo:
+            self.stxo_batches[height] = self.stxo
+            self.stxo = deque()
+
+        if self.transaction:
+            self.transactions_batches[height] = self.transactions
+            self.transactions = deque()
+
+        if self.headers:
+            self.headers_batches[height] = self.headers
+            self.headers = deque()
+
+        if self.blocks_stat:
+            self.blocks_stat_batches[height] = self.blocks_stat
+            self.blocks_stat = deque()
+
+        await self.save_batches()
+
 
 
     async def block_batch_handler(self, block):
-        while self.sync_worker_writer is None:
-            if self.sync_worker is None:
-                self.loop.create_task(self.sync_worker_process())
-                await asyncio.sleep(1)
-            else:
-                await asyncio.sleep(1)
-        pipe_sent_msg(b'block', pickle.dumps(block), self.sync_worker_writer)
-        await asyncio.wait([self.sync_worker_writer.drain(),])
+        try:
+
+            if self.block_best_timestamp < block["time"]:
+                self.block_best_timestamp = block["time"]
+
+            if block["height"] > self.start_checkpoint:
+
+                tx_append = self.transactions.append
+                for t in block["rawTx"]:
+                    raw_tx = block["rawTx"][t]["rawTx"] if self.transaction else None
+                    if self.merkle_proof:
+                        tx_append(((block["height"] << 39) + (t << 20), block["rawTx"][t]["txId"],
+                                   self.block_best_timestamp, raw_tx, block["rawTx"][t]["merkleProof"]))
+                    else:
+                        tx_append(((block["height"] << 39) + (t << 20),  block["rawTx"][t]["txId"],
+                                   self.block_best_timestamp,  raw_tx))
+
+                if self.transaction_history:
+                    self.tx_map += block["txMap"]
+                    self.stxo += block["stxo"]
+
+
+                if self.blocks_data:
+                    miner =  block["miner"]
+                    data = json.dumps({"version": block["version"],
+                            "previousBlockHash": block["previousBlockHash"],
+                            "merkleRoot": block["merkleRoot"],
+                            "bits": block["bits"],
+                            "nonce": block["nonce"],
+                            "weight": block["weight"],
+                            "size": block["size"],
+                            "strippedSize": block["strippedSize"],
+                            "amount": block["amount"],
+                            "target": block["target"],
+                            "targetDifficulty": block["targetDifficulty"]
+                            })
+                    self.headers.append((block["height"], s2rh(block["hash"]),
+                                         block["header"], self.block_best_timestamp, miner, data))
+                else:
+                    self.headers.append((block["height"], s2rh(block["hash"]), block["header"],
+                                         self.block_best_timestamp))
+
+                if self.blockchain_analytica:
+                    stat = block["stat"]
+                    self.blockchain_stat["oCountTotal"] += stat["oCountTotal"]
+                    if self.blockchain_stat["oAmountMinPointer"] or \
+                           self.blockchain_stat["oAmountMinValue"] > stat["oAmountMinValue"]:
+                            self.blockchain_stat["oAmountMinValue"]  = stat["oAmountMinValue"]
+                            self.blockchain_stat["oAmountMinPointer"]  = stat["oAmountMinPointer"]
+                    if self.blockchain_stat["oAmountMaxValue"] < stat["oAmountMaxValue"]:
+                        self.blockchain_stat["oAmountMaxValue"] = stat["oAmountMaxValue"]
+                        self.blockchain_stat["oAmountMaxPointer"] = stat["oAmountMaxPointer"]
+
+                    self.blockchain_stat["oAmountTotal"] += stat["oAmountTotal"]
+
+                    for k in stat["oAmountMapCount"]:
+                        try: self.blockchain_stat["oAmountMapCount"][k] += stat["oAmountMapCount"][k]
+                        except: self.blockchain_stat["oAmountMapCount"][k] = stat["oAmountMapCount"][k]
+
+                    for k in stat["oAmountMapAmount"]:
+                        try: self.blockchain_stat["oAmountMapAmount"][k] += stat["oAmountMapAmount"][k]
+                        except: self.blockchain_stat["oAmountMapAmount"][k] = stat["oAmountMapAmount"][k]
+
+                    for k in stat["oTypeMapCount"]:
+                        try: self.blockchain_stat["oTypeMapCount"][k] += stat["oTypeMapCount"][k]
+                        except: self.blockchain_stat["oTypeMapCount"][k] = stat["oTypeMapCount"][k]
+
+                    for k in stat["oTypeMapAmount"]:
+                        try: self.blockchain_stat["oTypeMapAmount"][k] += stat["oTypeMapAmount"][k]
+                        except: self.blockchain_stat["oTypeMapAmount"][k] = stat["oTypeMapAmount"][k]
+
+                    for k in stat["oTypeMapSize"]:
+                        try: self.blockchain_stat["oTypeMapSize"][k] += stat["oTypeMapSize"][k]
+                        except: self.blockchain_stat["oTypeMapSize"][k] = stat["oTypeMapSize"][k]
+
+                    self.blockchain_stat["iCountTotal"] += stat["iCountTotal"]
+                    self.blockchain_stat["iAmountTotal"] += stat["iAmountTotal"]
+
+                    if self.blockchain_stat["iAmountMinPointer"] or \
+                           self.blockchain_stat["iAmountMinValue"] > stat["iAmountMinValue"]:
+                            self.blockchain_stat["iAmountMinValue"]  = stat["iAmountMinValue"]
+                            self.blockchain_stat["iAmountMinPointer"]  = stat["iAmountMinPointer"]
+
+                    if self.blockchain_stat["iAmountMaxValue"] < stat["iAmountMaxValue"]:
+                        self.blockchain_stat["iAmountMaxValue"] = stat["iAmountMaxValue"]
+                        self.blockchain_stat["iAmountMaxPointer"] = stat["iAmountMaxPointer"]
+
+                    for k in stat["iAmountMapCount"]:
+                        try: self.blockchain_stat["iAmountMapCount"][k] += stat["iAmountMapCount"][k]
+                        except: self.blockchain_stat["iAmountMapCount"][k] = stat["iAmountMapCount"][k]
+
+                    for k in stat["iAmountMapAmount"]:
+                        try: self.blockchain_stat["iAmountMapAmount"][k] += stat["iAmountMapAmount"][k]
+                        except: self.blockchain_stat["iAmountMapAmount"][k] = stat["iAmountMapAmount"][k]
+
+                    for k in stat["iAmountMapAmount"]:
+                        try: self.blockchain_stat["iAmountMapAmount"][k] += stat["iAmountMapAmount"][k]
+                        except: self.blockchain_stat["iAmountMapAmount"][k] = stat["iAmountMapAmount"][k]
+
+                    for k in stat["iTypeMapAmount"]:
+                        try: self.blockchain_stat["iTypeMapAmount"][k] += stat["iTypeMapAmount"][k]
+                        except: self.blockchain_stat["iTypeMapAmount"][k] = stat["iTypeMapAmount"][k]
+
+                    for k in stat["iP2SHtypeMapCount"]:
+                        try: self.blockchain_stat["iP2SHtypeMapCount"][k] += stat["iP2SHtypeMapCount"][k]
+                        except: self.blockchain_stat["iP2SHtypeMapCount"][k] = stat["iP2SHtypeMapCount"][k]
+
+                    for k in stat["iP2SHtypeMapAmount"]:
+                        try: self.blockchain_stat["iP2SHtypeMapAmount"][k] += stat["iP2SHtypeMapAmount"][k]
+                        except: self.blockchain_stat["iP2SHtypeMapAmount"][k] = stat["iP2SHtypeMapAmount"][k]
+
+
+                    for k in stat["iP2WSHtypeMapCount"]:
+                        try: self.blockchain_stat["iP2WSHtypeMapCount"][k] += stat["iP2WSHtypeMapCount"][k]
+                        except: self.blockchain_stat["iP2WSHtypeMapCount"][k] = stat["iP2WSHtypeMapCount"][k]
+
+                    for k in stat["iP2WSHtypeMapAmount"]:
+                        try:
+                            self.blockchain_stat["iP2WSHtypeMapAmount"][k] += stat["iP2WSHtypeMapAmount"][k]
+                        except:
+                            self.blockchain_stat["iP2WSHtypeMapAmount"][k] = stat["iP2WSHtypeMapAmount"][k]
+
+                    self.blockchain_stat["txCountTotal"] += stat["txCountTotal"]
+
+                    if self.blockchain_stat["txAmountMinValue"] < stat["txAmountMinValue"]:
+                        self.blockchain_stat["txAmountMinValue"] = stat["txAmountMinValue"]
+                        self.blockchain_stat["txAmountMinPointer"] = stat["txAmountMinPointer"]
+
+
+                    if self.blockchain_stat["txAmountMaxValue"] < stat["txAmountMaxValue"]:
+                        self.blockchain_stat["txAmountMaxValue"] = stat["txAmountMaxValue"]
+                        self.blockchain_stat["txAmountMaxPointer"] = stat["txAmountMaxPointer"]
+
+                    for k in stat["txAmountMapCount"]:
+                        try: self.blockchain_stat["txAmountMapCount"][k] += stat["txAmountMapCount"][k]
+                        except: self.blockchain_stat["txAmountMapCount"][k] = stat["txAmountMapCount"][k]
+
+                    for k in stat["txAmountMapAmount"]:
+                        try: self.blockchain_stat["txAmountMapAmount"][k] += stat["txAmountMapAmount"][k]
+                        except: self.blockchain_stat["txAmountMapAmount"][k] = stat["txAmountMapAmount"][k]
+
+                    for k in stat["txAmountMapSize"]:
+                        try: self.blockchain_stat["txAmountMapSize"][k] += stat["txAmountMapSize"][k]
+                        except: self.blockchain_stat["txAmountMapSize"][k] = stat["txAmountMapSize"][k]
+
+                    self.blockchain_stat["txAmountTotal"] += stat["txAmountTotal"]
+
+                    if self.blockchain_stat["txSizeMinValue"] < stat["txSizeMinValue"]:
+                        self.blockchain_stat["txSizeMinValue"] = stat["txSizeMinValue"]
+                        self.blockchain_stat["txSizeMinPointer"] = stat["txSizeMinPointer"]
+
+                    if self.blockchain_stat["txSizeMaxValue"] < stat["txSizeMaxValue"]:
+                        self.blockchain_stat["txSizeMaxValue"] = stat["txSizeMaxValue"]
+                        self.blockchain_stat["txSizeMaxPointer"] = stat["txSizeMaxPointer"]
+
+                    self.blockchain_stat["txSizeTotal"] += stat["txSizeTotal"]
+                    self.blockchain_stat["txVSizeTotal"] += stat["txVSizeTotal"]
+                    self.blockchain_stat["txBSizeTotal"] += stat["txBSizeTotal"]
+
+                    for k in stat["txSizeMapCount"]:
+                        try: self.blockchain_stat["txSizeMapCount"][k] += stat["txSizeMapCount"][k]
+                        except: self.blockchain_stat["txSizeMapCount"][k] = stat["txSizeMapCount"][k]
+
+                    for k in stat["txSizeMapAmount"]:
+                        try:
+                            self.blockchain_stat["txSizeMapAmount"][k] += stat["txSizeMapAmount"][k]
+                        except:
+                            self.blockchain_stat["txSizeMapAmount"][k] = stat["txSizeMapAmount"][k]
+
+                    for k in stat["txTypeMapCount"]:
+                        try:
+                            self.blockchain_stat["txTypeMapCount"][k] += stat["txTypeMapCount"][k]
+                        except:
+                            self.blockchain_stat["txTypeMapCount"][k] = stat["txTypeMapCount"][k]
+
+                    for k in stat["txTypeMapSize"]:
+                        try:
+                            self.blockchain_stat["txTypeMapSize"][k] += stat["txTypeMapSize"][k]
+                        except:
+                            self.blockchain_stat["txTypeMapSize"][k] = stat["txTypeMapSize"][k]
+
+                    for k in stat["txTypeMapAmount"]:
+                        try:
+                            self.blockchain_stat["txTypeMapAmount"][k] += stat["txTypeMapAmount"][k]
+                        except:
+                            self.blockchain_stat["txTypeMapAmount"][k] = stat["txTypeMapAmount"][k]
+
+                    # if self.blockchain_stat["feeMinValue"] < stat["feeMinValue"]:
+                    #     self.blockchain_stat["feeMinValue"] = stat["feeMinValue"]
+                    #     self.blockchain_stat["feeMinPointer"] = stat["feeMinPointer"]
+                    #
+                    #
+                    # if self.blockchain_stat["feeMaxValue"] < stat["feeMaxValue"]:
+                    #     self.blockchain_stat["feeMaxValue"] = stat["feeMaxValue"]
+                    #     self.blockchain_stat["feeMaxPointer"] = stat["feeMaxPointer"]
+                    #
+                    # self.blockchain_stat["feeTotal"] += stat["feeTotal"]
+
+
+                    self.blocks_stat.append((block["height"],
+                                             json.dumps(block["stat"]),
+                                             json.dumps(self.blockchain_stat)))
+
+
+                batch_ready = False
+
+                if len(self.transactions) >= self.batch_limit: batch_ready = True
+                elif len(self.tx_map) >= self.batch_limit: batch_ready = True
+                elif len(self.headers) >= self.batch_limit: batch_ready = True
+
+                if batch_ready:
+                    self.headers_batches[block["height"]] = self.headers
+                    self.headers = deque()
+
+                    self.transactions_batches[block["height"]] = self.transactions
+                    self.transactions = deque()
+
+                    if self.transaction_history:
+                        self.tx_map_batches[block["height"]] = self.tx_map
+                        self.tx_map = deque()
+                        self.stxo_batches[block["height"]] = self.stxo
+                        self.stxo = deque()
+
+                    if self.blockchain_analytica:
+                        self.blocks_stat_batches[block["height"]] = self.blocks_stat
+                        self.blocks_stat = deque()
+
+                    self.loop.create_task(self.save_batches())
+        except:
+            print(traceback.format_exc())
+            raise
+
+    async def save_batches(self):
+        try:
+            while self.headers_batches:
+                height, h_batch = self.headers_batches.pop()
+                if height in self.transactions_batches:
+                    tx_batch = self.transactions_batches.delete(height)
+                else:
+                    tx_batch = False
+                async with self.db_pool.acquire() as conn:
+                    async with conn.transaction():
+                        if self.blocks_data:
+                            blocks_columns = ["height", "hash", "header", "adjusted_timestamp", "miner", "data"]
+                        else:
+                            blocks_columns = ["height", "hash", "header", "adjusted_timestamp"]
+
+                        await conn.copy_records_to_table('blocks', columns=blocks_columns, records=h_batch)
+
+                        if self.merkle_proof:
+                            transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction",
+                                                   "merkle_proof"]
+                        else:
+                            transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction"]
+
+                        if tx_batch:
+                            await conn.copy_records_to_table('transaction',
+                                                             columns=transaction_columns, records=tx_batch)
+
+                        if height in self.tx_map_batches:
+                            batch = self.tx_map_batches.delete(height)
+                            await conn.copy_records_to_table('transaction_map',
+                                                             columns=["pointer", "address", "amount"],
+                                                             records=batch)
+
+                        if height in self.stxo_batches:
+                            stxo_batch = self.stxo_batches.delete(height)
+                            if stxo_batch:
+                                await conn.copy_records_to_table('stxo',
+                                                                 columns=["pointer", "s_pointer"],
+                                                                 records=stxo_batch)
+                        if height in self.blocks_stat_batches:
+                            h_batch = self.blocks_stat_batches.delete(height)
+
+                            await conn.copy_records_to_table('blocks_stat',
+                                                             columns=["height", "block", "blockchain"],
+                                                             records=h_batch)
+
+                    self.connector.app_last_block = height
+
+        except asyncio.CancelledError:
+            self.log.debug("save_to_db process canceled")
+        except:
+            self.log.critical("save_to_db process failed; terminate server ...")
+            self.log.critical(str(traceback.format_exc()))
+            self.loop.create_task(self.terminate_coroutine())
+
+
+    async def create_indexes(self):
+        tasks = [self.loop.create_task(self.create_tx_index()),
+                 self.loop.create_task(self.create_tx_history_index()),
+                 self.loop.create_task(self.create_address_utxo_index()),
+                 self.loop.create_task(self.create_blocks_hash_index())]
+        self.log.info("create indexes ...")
+        await asyncio.wait(tasks)
+        self.log.info("create indexes completed")
+
+
+    async def create_tx_index(self):
+        async with self.db_pool.acquire() as conn:
+            await conn.execute("CREATE INDEX IF NOT EXISTS transactions_map_tx_id "
+                               "ON transaction USING BTREE (tx_id);")
+
+
+    async def create_tx_history_index(self):
+        if self.transaction_history:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("CREATE INDEX IF NOT EXISTS txmap_address_map_pointer "
+                                   "ON transaction_map USING BTREE (address, pointer);")
+
+    async def create_address_utxo_index(self):
+        if self.transaction_history:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("CREATE INDEX IF NOT EXISTS address_map_utxo "
+                                   "ON connector_utxo USING BTREE (address, pointer);")
+                await conn.execute("CREATE INDEX IF NOT EXISTS address_map_uutxo "
+                                   "ON connector_unconfirmed_utxo USING BTREE (address);")
+
+
+    async def create_blocks_hash_index(self):
+        async with self.db_pool.acquire() as conn:
+            await conn.execute("CREATE INDEX IF NOT EXISTS blocks_hash "
+                               "ON blocks USING BTREE (hash);")
 
 
     async def orphan_block_handler(self, data, conn):
@@ -226,33 +701,33 @@ class App:
                                          records=batch)
 
         # transaction map table
+        if self.transaction_history:
+            rows = await conn.fetch("DELETE FROM transaction_map WHERE pointer >= $1 " 
+                                    "RETURNING  pointer, address, amount;",  data["height"] << 39)
 
-        rows = await conn.fetch("DELETE FROM transaction_map WHERE pointer >= $1 " 
-                                "RETURNING  pointer, address, amount;",  data["height"] << 39)
-
-        batch = []
-        t = int(time.time())
-        for row in rows:
-            pointer = (t << 32) + row["pointer"] & ((1<<20) - 1)
-            batch.append((pointer_map_tx_id[(row["pointer"] >> 20) << 20],
-                          pointer,
-                          row["address"],
-                          row["amount"]))
+            batch = []
+            t = int(time.time())
+            for row in rows:
+                pointer = (t << 32) + row["pointer"] & ((1<<20) - 1)
+                batch.append((pointer_map_tx_id[(row["pointer"] >> 20) << 20],
+                              pointer,
+                              row["address"],
+                              row["amount"]))
 
 
-        rows = await conn.fetch("DELETE FROM invalid_transaction_map WHERE tx_id = ANY($1) "
-                                "RETURNING  tx_id, pointer, address, amount;",  data["mempool"]["tx"])
+            rows = await conn.fetch("DELETE FROM invalid_transaction_map WHERE tx_id = ANY($1) "
+                                    "RETURNING  tx_id, pointer, address, amount;",  data["mempool"]["tx"])
 
-        for row in rows:
-            batch.append((row["tx_id"],
-                          row["pointer"],
-                          row["address"],
-                          row["amount"]))
+            for row in rows:
+                batch.append((row["tx_id"],
+                              row["pointer"],
+                              row["address"],
+                              row["amount"]))
 
-        await conn.copy_records_to_table('unconfirmed_transaction_map',
-                                         columns=["tx_id", "pointer",
-                                                  "address", "amount"],
-                                         records=batch)
+            await conn.copy_records_to_table('unconfirmed_transaction_map',
+                                             columns=["tx_id", "pointer",
+                                                      "address", "amount"],
+                                             records=batch)
 
         # blocks table
 
@@ -263,28 +738,26 @@ class App:
 
 
     async def synchronization_completed_handler(self):
-        if self.sync_worker:
-            self.sync_worker.terminate()
-            async with self.db_pool.acquire() as conn:
-                async with conn.transaction():
-                    await conn.execute("TRUNCATE TABLE unconfirmed_transaction;")
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("TRUNCATE TABLE unconfirmed_transaction;")
+                if self.transaction_history:
                     await conn.execute("TRUNCATE TABLE unconfirmed_transaction_map;")
-                    await conn.execute("UPDATE service SET value = '1' WHERE name = 'bootstrap_completed';")
+                await conn.execute("UPDATE service SET value = '1' WHERE name = 'bootstrap_completed';")
+        await self.create_indexes()
+
+
 
 
     async def new_block_handler(self, block, conn):
         try:
-            if not self.address_state_process.done():
-                self.log.debug("Wait for address state module block process completed ...")
-                await self.address_state_process
-
             hash_list = [s2rh(t) for t in block["tx"]]
             if self.merkle_proof:
+
                 m_tree = merkle_tree(hash_list)
-                transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction",
-                                       "inputs_data", "merkle_proof"]
+                transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction",  "merkle_proof"]
             else:
-                transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction", "inputs_data"]
+                transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction"]
 
             # unconfirmed_transaction table
 
@@ -298,14 +771,12 @@ class App:
                                   row["tx_id"],
                                   row["timestamp"],
                                   row["raw_transaction"],
-                                  row["inputs_data"],
                                   b''.join(merkle_proof(m_tree, index, return_hex=False))))
                 else:
                     batch.append(((block["height"] << 39) + (index << 20),
                                   row["tx_id"],
                                   row["timestamp"],
-                                  row["raw_transaction"],
-                                  row["inputs_data"]))
+                                  row["raw_transaction"]))
             await conn.copy_records_to_table('transaction', columns=transaction_columns, records=batch)
 
             # invalid_transaction table
@@ -324,36 +795,36 @@ class App:
                                                  records=batch)
 
 
+            if self.transaction_history:
+                # invalid_transaction_map
+                if block["mempoolInvalid"]["tx"]:
+                    rows = await conn.fetch("DELETE FROM unconfirmed_transaction_map WHERE tx_id = ANY($1) "
+                                            "RETURNING  tx_id, pointer, address, amount;",
+                                            block["mempoolInvalid"]["tx"])
+                    batch = []
 
-            # invalid_transaction_map
-            if block["mempoolInvalid"]["tx"]:
-                rows = await conn.fetch("DELETE FROM unconfirmed_transaction_map WHERE tx_id = ANY($1) "
-                                        "RETURNING  tx_id, pointer, address, amount;",
-                                        block["mempoolInvalid"]["tx"])
-                batch = []
+                    for row in rows:
+                        batch.append((row["tx_id"], row["pointer"], row["address"], row["amount"]))
 
-                for row in rows:
-                    batch.append((row["tx_id"], row["pointer"], row["address"], row["amount"]))
-
-                await conn.copy_records_to_table('invalid_transaction_map',
-                                                 columns=["tx_id", "pointer", "address", "amount"],
-                                                 records=batch)
+                    await conn.copy_records_to_table('invalid_transaction_map',
+                                                     columns=["tx_id", "pointer", "address", "amount"],
+                                                     records=batch)
 
 
-            # unconfirmed_transaction_map
+                # unconfirmed_transaction_map
+                if self.transaction_history:
+                    rows = await conn.fetch("DELETE FROM unconfirmed_transaction_map WHERE tx_id = ANY($1) "
+                                            "RETURNING  tx_id, pointer, address, amount;", hash_list)
+                    utxo_batch = []
+                    for row in rows:
+                        index = block["tx"].index(rh2s(row["tx_id"]))
+                        pointer = (block["height"] << 39) + (index << 20) + (row["pointer"] & 1048575)
+                        utxo_batch.append((pointer, row["address"], row["amount"]))
 
-            rows = await conn.fetch("DELETE FROM unconfirmed_transaction_map WHERE tx_id = ANY($1) "
-                                    "RETURNING  tx_id, pointer, address, amount;", hash_list)
-            utxo_batch = []
-            for row in rows:
-                index = block["tx"].index(rh2s(row["tx_id"]))
-                pointer = (block["height"] << 39) + (index << 20) + (row["pointer"] & 1048575)
-                utxo_batch.append((pointer, row["address"], row["amount"]))
-
-            # transaction map table
-            await conn.copy_records_to_table('transaction_map',
-                                             columns=["pointer", "address", "amount"],
-                                             records=utxo_batch)
+                    # transaction map table
+                    await conn.copy_records_to_table('transaction_map',
+                                                     columns=["pointer", "address", "amount"],
+                                                     records=utxo_batch)
 
 
             # if address state table synchronized
@@ -396,22 +867,13 @@ class App:
                 self.address_state_block = block["height"]
 
             # blocks table
-            if self.address_timeline:
-                if self.block_best_timestamp < block["time"]:
-                    self.block_best_timestamp = block["time"]
-                await conn.copy_records_to_table('blocks',
-                                                 columns=["height", "hash", "header",
-                                                          "timestamp", "timestamp_received",
-                                                          "adjusted_timestamp"],
-                                                 records=[(block["height"], s2rh(block["hash"]),
-                                                           block["header"], int(time.time()),
-                                                           block["time"], self.block_best_timestamp)])
-            else:
-                await conn.copy_records_to_table('blocks',
-                                                 columns=["height", "hash", "header",
-                                                          "timestamp", "timestamp_received"],
-                                                 records=[(block["height"], s2rh(block["hash"]),
-                                                           block["header"], block["time"], int(time.time()))])
+
+            if self.block_best_timestamp < block["time"]:  self.block_best_timestamp = block["time"]
+            await conn.copy_records_to_table('blocks',
+                                             columns=["height", "hash", "header", "timestamp_received",
+                                                      "adjusted_timestamp"],
+                                             records=[(block["height"], s2rh(block["hash"]),
+                                                       block["header"], int(time.time()), self.block_best_timestamp)])
 
         except:
             print(traceback.format_exc())
@@ -419,43 +881,48 @@ class App:
 
 
     async def new_transaction_handler(self, tx, timestamp, conn):
-        raw_tx = tx.serialize(hex=False)
-        tx_map = []
-        tx_map_append = tx_map.append
-        inputs = []
-        inputs_append = inputs.append
-        if not tx["coinbase"]:
-            for i in tx["vIn"]:
-                inputs_append(tx["vIn"][i]["coin"][2])
-                inputs_append(int_to_c_int(tx["vIn"][i]["coin"][1]))
-                tx_map_append((tx["txId"],
-                               (timestamp << 32) + (0 << 19) + i,
-                               tx["vIn"][i]["coin"][2],
-                               tx["vIn"][i]["coin"][1]))
-
-                    # prepare outputs
-        for i in tx["vOut"]:
-            out = tx["vOut"][i]
-            if out["nType"] in (7, 8, 3, 4): continue
-
-            if "addressHash" not in out:
-                address = b"".join((bytes([out["nType"]]), out["scriptPubKey"]))
-            else:
-                address = b"".join((bytes([out["nType"]]), out["addressHash"]))
-            tx_map_append((tx["txId"], (timestamp << 32) +  (1 << 19) + i, address, out["value"]))
+        try:
+            raw_tx = tx.serialize(hex=False)
+            tx_map = []
+            tx_map_append = tx_map.append
+            inputs = []
+            inputs_append = inputs.append
+            if not tx["coinbase"] and self.transaction_history:
+                for i in tx["vIn"]:
+                    inputs_append(tx["vIn"][i]["coin"][2])
+                    inputs_append(int_to_c_int(tx["vIn"][i]["coin"][1]))
+                    tx_map_append((tx["txId"],
+                                   (timestamp << 32) + (0 << 19) + i,
+                                   tx["vIn"][i]["coin"][2],
+                                   tx["vIn"][i]["coin"][1]))
 
 
-        await conn.copy_records_to_table('unconfirmed_transaction_map',
-                                         columns=["tx_id", "pointer",
-                                                  "address", "amount"], records=tx_map)
+
+            if self.transaction_history:
+                for i in tx["vOut"]:
+                    out = tx["vOut"][i]
+                    if out["nType"] in (8, 3): continue
+
+                    if "addressHash" not in out:
+                        address = b"".join((bytes([out["nType"]]), out["scriptPubKey"]))
+                    else:
+                        address = b"".join((bytes([out["nType"]]), out["addressHash"]))
+                    tx_map_append((tx["txId"], (timestamp << 32) + (1 << 19) + i, address, out["value"]))
+
+                await conn.copy_records_to_table('unconfirmed_transaction_map',
+                                                 columns=["tx_id", "pointer",
+                                                          "address", "amount"], records=tx_map)
 
 
-        await conn.execute("""INSERT INTO unconfirmed_transaction (tx_id,
-                                                                   raw_transaction,
-                                                                   timestamp,
-                                                                   inputs_data)
-                              VALUES ($1, $2, $3, $4);
-                            """, tx["txId"], raw_tx, int(time.time()), b''.join(inputs))
+            await conn.execute("""INSERT INTO unconfirmed_transaction (tx_id,
+                                                                       raw_transaction,
+                                                                       timestamp,
+                                                                       inputs_data)
+                                  VALUES ($1, $2, $3, $4);
+                                """, tx["txId"], raw_tx, int(time.time()), b''.join(inputs))
+        except:
+            print(traceback.format_exc())
+            raise
 
 
     async def address_state_processor(self):
@@ -549,61 +1016,6 @@ class App:
 
 
 
-
-
-
-    async def sync_worker_process(self):
-        self.log.warning('Start synchronization worker')
-        # prepare pipes for communications
-        in_reader, in_writer = os.pipe()
-        out_reader, out_writer = os.pipe()
-        in_reader, out_reader  = os.fdopen(in_reader,'rb'), os.fdopen(out_reader,'rb')
-        in_writer, out_writer  = os.fdopen(in_writer,'wb'), os.fdopen(out_writer,'wb')
-
-        start_blocks = {"transaction_map_start_block": self.transaction_map_start_block,
-                        "transaction_start_block": self.transaction_start_block,
-                        "headers_start_block": self.block_start_block}
-
-
-        # create new process
-        self.sync_worker = Process(target=SynchronizationWorker, args=(in_reader, in_writer,
-                                                                       out_reader, out_writer,
-                                                                       self.psql_dsn,
-                                                                       start_blocks,
-                                                                       self.merkle_proof,
-                                                                       self.address_timeline,
-                                                                       self.blockchain_analytica))
-        self.sync_worker.start()
-        in_reader.close()
-        out_writer.close()
-        # get stream reader
-        self.sync_worker_reader = await get_pipe_reader(out_reader, self.loop)
-        self.sync_worker_writer = await get_pipe_writer(in_writer, self.loop)
-
-        # start message loop
-        self.tasks.append(self.loop.create_task(self.sync_worker_message_loop()))
-        # wait if process crash
-        await self.loop.run_in_executor(None, self.sync_worker.join)
-        self.log.warning('Synchronization worker stopped')
-        self.sync_worker = None
-        self.sync_worker_writer = None
-        self.sync_worker_reader = None
-
-
-    async def sync_worker_message_loop(self):
-        try:
-            while True:
-                msg_type, msg = await pipe_get_msg(self.sync_worker_reader)
-                if msg_type == b'checkpoint':
-                    self.connector.app_last_block = pickle.loads(msg)
-        except asyncio.CancelledError:
-            self.log.debug("sync worker message loop  canceled")
-        except:
-            self.log.critical("broken pipe; terminate server ...")
-            self.log.critical(str(traceback.format_exc()))
-            self.loop.create_task(self.terminate_coroutine())
-
-
     def _exc(self, a, b, c):
         return
 
@@ -613,7 +1025,11 @@ class App:
             self.shutdown = True
             self.loop.create_task(self.terminate_coroutine())
         else:
-            self.log.critical("Shutdown in progress please wait ...")
+            if not self.force_shutdown:
+                self.log.critical("Shutdown in progress please wait ... (or press CTRL + C to force shutdown)")
+                self.force_shutdown = True
+            else:
+                sys.exit(0)
 
 
     async def terminate_coroutine(self):
@@ -623,7 +1039,6 @@ class App:
             self.log.warning("Stop node connector")
             await self.connector.stop()
 
-        self.log.warning('sync worker stop request received')
         [process.terminate() for process in self.processes]
         for task in self.tasks:
             if not task.done():

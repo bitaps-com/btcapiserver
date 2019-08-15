@@ -1,8 +1,21 @@
 CREATE TABLE IF NOT EXISTS blocks_stat (height BIGINT NOT NULL,
+                                        block JSON,
+                                        blockchain JSON,
+                                        PRIMARY KEY(height));
+
+CREATE TABLE IF NOT EXISTS blocks_addresses_stat (height BIGINT NOT NULL,
                                         block JSONB,
                                         blockchain JSONB,
-                                        blockchain_addresses JSONB,
                                         PRIMARY KEY(height));
+
+
+
+
+
+
+
+
+
 
 
 CREATE TABLE IF NOT EXISTS blocks_daily_stat (day INT4 NOT NULL,
@@ -152,7 +165,7 @@ blockchain_stat = {"outputs": {"count": {"total": int},            # total outpu
 
                               "type": {
                                        "map": {"count": dict(),   # quantity distribution by type
-                                                                  # How many P2SH  spent coins?
+
 
                                                "amount": dict(),  # amounts distribution by type
                                                                   # What is the total amount of all P2PKH spent?
