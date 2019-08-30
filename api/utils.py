@@ -33,6 +33,17 @@ NOT_FOUND_ADDRESS = 23
 
 DOMAIN_PREFIX = b'\x08T\xc8'
 
+log_level_map = {"DEBUG": 10,
+                 "debug": 10,
+                 "INFO": 20,
+                 "info": 20,
+                 "WARNING": 30,
+                 "warning": 30,
+                 "ERROR": 40,
+                 "error": 40,
+                 "CRITICAL": 50,
+                 "critical": 50}
+
 
 ADDRESS_TYPE_MAP = {'P2PKH': b"\x00",
                     'P2SH': b"\x01",

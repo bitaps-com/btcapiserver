@@ -4,7 +4,6 @@ import sys
 import colorlog
 import model
 from routes import *
-import aiohttp_jinja2
 
 
 config_file =   "/config/btcapi-server.conf"
@@ -23,6 +22,12 @@ except Exception as err:
     logger.critical("Shutdown")
     sys.exit(0)
 
+try:
+    log_level = log_level_map[config["SERVER"]["api_log_level"]]
+    dbg = True
+except:
+    dbg = False
+
 logger.setLevel(log_level)
 ch = logging.StreamHandler()
 ch.setLevel(log_level)
@@ -34,6 +39,7 @@ app = web.Application()
 
 
 app['dsn'] = postgres_dsn
+app['debug'] = dbg
 app['pool_threads'] = int(pool_threads)
 app['log'] = logger
 app['testnet'] = testnet
@@ -45,6 +51,12 @@ app["address_timeline"] = True if config["OPTIONS"]["address_timeline"] == "on" 
 app["blockchain_analytica"] = True if config["OPTIONS"]["blockchain_analytica"] == "on" else False
 app["transaction_history"] = True if config["OPTIONS"]["transaction_history"] == "on" else False
 
+app["block_filters"] = True if config["OPTIONS"]["block_filters"] == "on" else False
+app["block_filter_fps"] = int(config["OPTIONS"]["block_filter_fps"])
+app["block_filter_bits"] = int(config["OPTIONS"]["block_filter_bits"])
+app["block_filter_capacity"] = int(config["OPTIONS"]["block_filter_capacity"])
+
+
 try: app["get_block_utxo_page_limit"] = int(config["API"]["get_block_utxo_page_limit"])
 except: app["get_block_utxo_page_limit"] = 5000
 
@@ -52,6 +64,6 @@ try: app["get_block_tx_page_limit"] = int(config["API"]["get_block_tx_page_limit
 except: app["get_block_tx_page_limit"] = 5000
 
 app.on_startup.append(model.init_db_pool)
-# app.on_startup.append(model.load_block_map)
+app.on_startup.append(model.load_block_map)
 app.on_cleanup.append(model.close_db_pool)
 setup_routes(app)

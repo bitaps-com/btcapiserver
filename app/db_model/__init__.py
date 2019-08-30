@@ -10,6 +10,71 @@ async def create_db_model(app, conn):
         raise Exception("Postgres repeatable read isolation level required! current isolation level is %s" % level)
     await conn.execute(open("./db_model/sql/schema.sql", "r", encoding='utf-8').read().replace("\n",""))
 
+    await conn.execute("""
+    
+    CREATE OR REPLACE FUNCTION  contains_in_bloom_filter(bfilter bytea, elem bytea, max_elements_count integer, n_tweak integer)
+RETURNS integer
+AS $$
+   from struct import unpack
+
+   _BIT_MASK = bytearray([0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80])
+   MAX_BLOOM_FILTER_SIZE = 36000
+   MAX_HASH_FUNCS = 50
+   LN2SQUARED = 0.4804530139182014246671025263266649717305529515945455
+   LN2 = 0.6931471805599453094172321214581765680755001343602552
+
+   def murmur_hash3(nHashSeed, vDataToHash):
+       h1 = nHashSeed
+       c1 = 0xcc9e2d51
+       c2 = 0x1b873593
+
+       i = 0
+       while (i < len(vDataToHash) - len(vDataToHash) % 4 and len(vDataToHash) - i >= 4):
+           k1 = unpack(b"<L", vDataToHash[i:i+4])[0]
+           k1 = (k1 * c1) & 0xFFFFFFFF
+           k1 = ((k1 << 15) & 0xFFFFFFFF) | (k1 >> (32 - 15))
+           k1 = (k1 * c2) & 0xFFFFFFFF
+           h1 ^= k1
+           h1 = ((h1 << 13) & 0xFFFFFFFF) | (h1 >> (32 - 13))
+           h1 = (((h1*5) & 0xFFFFFFFF) + 0xe6546b64) & 0xFFFFFFFF
+           i += 4
+
+       k1 = 0
+       j = (len(vDataToHash) // 4) * 4
+       if len(vDataToHash) & 3 >= 3: k1 ^= vDataToHash[j+2] << 16
+       if len(vDataToHash) & 3 >= 2: k1 ^= vDataToHash[j+1] << 8
+       if len(vDataToHash) & 3 >= 1: k1 ^= vDataToHash[j]
+
+       k1 &= 0xFFFFFFFF
+       k1 = (k1 * c1) & 0xFFFFFFFF
+       k1 = ((k1 << 15) & 0xFFFFFFFF) | (k1 >> (32 - 15))
+       k1 = (k1 * c2) & 0xFFFFFFFF
+       h1 ^= k1
+
+       h1 ^= len(vDataToHash) & 0xFFFFFFFF
+       h1 ^= (h1 & 0xFFFFFFFF) >> 16
+       h1 *= 0x85ebca6b
+       h1 ^= (h1 & 0xFFFFFFFF) >> 13
+       h1 *= 0xc2b2ae35
+       h1 ^= (h1 & 0xFFFFFFFF) >> 16
+
+       return h1 & 0xFFFFFFFF
+
+
+   fl = len(bfilter)
+   if fl == 1 and bfilter[0] == 0xff: return 1
+
+   for i in range(0, int(min(fl * 8 / max_elements_count * LN2, MAX_HASH_FUNCS))):
+       n_index = murmur_hash3(((i * 0xFBA4C795) + n_tweak) & 0xFFFFFFFF, elem) % (fl * 8)
+       if not (bfilter[n_index >> 3] & _BIT_MASK[7 & n_index]):
+           return 0
+   return 1
+
+  $$ LANGUAGE plpython3u;
+    
+    """)
+
+
 
     # blocks data
 
@@ -72,6 +137,30 @@ async def create_db_model(app, conn):
         app.log.critical("merkle_proof config option not match db structure; you should drop db and recreate it.")
         raise Exception("DB structure invalid")
 
+
+    if app.block_filters:
+        if not app.merkle_proof:
+            app.log.critical("block_filters option required merkle_proof option enabled")
+            raise Exception("configuration invalid")
+
+        await conn.execute(open("./db_model/sql/filters.sql",
+                                "r", encoding='utf-8').read().replace("\n", ""))
+        await conn.execute("""
+                           INSERT INTO service (name, value) VALUES ('block_filters', '1')  
+                           ON CONFLICT(name) DO NOTHING;
+                           """)
+    else:
+        await conn.execute("""
+                           INSERT INTO service (name, value) VALUES ('block_filters', '0') 
+                           ON CONFLICT(name) DO NOTHING;
+                           """)
+
+    m = await conn.fetchval("SELECT service.value FROM service WHERE service.name ='block_filters' LIMIT 1;")
+    app.log.info("Option block_filters = %s" % m)
+
+    if int(m) == 1 and not app.block_filters or app.block_filters and int(m) == 0:
+        app.log.critical("block_filters config option not match db structure; you should drop db and recreate it.")
+        raise Exception("DB structure invalid")
 
 
 

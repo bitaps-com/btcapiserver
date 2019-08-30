@@ -1,3 +1,4 @@
+import pybtc
 import argparse
 import asyncio
 import configparser
@@ -13,7 +14,8 @@ import colorlog
 from multiprocessing import Process
 from synchronization import SynchronizationWorker
 from modules.address_state import AddressStateSync
-import pybtc
+from modules.filter_compressor import FilterCompressor
+
 from collections import deque
 from pybtc import int_to_c_int, MRU
 from pybtc import s2rh, rh2s, merkle_tree, merkle_proof, parse_script
@@ -46,6 +48,10 @@ class App:
         self.merkle_proof = True if config["OPTIONS"]["merkle_proof"] == "on" else False
         self.address_state = True if config["OPTIONS"]["address_state"] == "on" else False
         self.address_timeline = True if config["OPTIONS"]["address_timeline"] == "on" else False
+        self.block_filters = True if config["OPTIONS"]["block_filters"] == "on" else False
+        self.block_filter_fps = int(config["OPTIONS"]["block_filter_fps"])
+        self.block_filter_bits = int(config["OPTIONS"]["block_filter_bits"])
+        self.block_filter_capacity = int(config["OPTIONS"]["block_filter_capacity"])
         self.blockchain_analytica = True if config["OPTIONS"]["blockchain_analytica"] == "on" else False
         self.blocks_data = True if config["OPTIONS"]["blocks_data"] == "on" else False
         self.transaction_history = True if config["OPTIONS"]["transaction_history"] == "on" else False
@@ -61,10 +67,13 @@ class App:
         self.force_shutdown = False
         self.executor = ThreadPoolExecutor(max_workers=5)
         setproctitle('btcapi engine')
-
         self.headers = deque()
         self.headers_batches = MRU()
-        self.batch_limit = 5000
+
+        self.filters = deque()
+        self.filters_batches = MRU()
+
+        self.batch_limit = 50000
         self.transactions = deque()
         self.transactions_batches = MRU()
 
@@ -235,6 +244,10 @@ class App:
                                              rpc_batch_limit=100,
                                              db_type="postgresql",
                                              db=self.psql_dsn,
+                                             block_filters=self.block_filters,
+                                             block_filter_fps=self.block_filter_fps,
+                                             block_filter_bits=self.block_filter_bits,
+                                             block_filter_capacity=self.block_filter_capacity,
                                              merkle_proof=self.merkle_proof,
                                              tx_map=self.transaction_history,
                                              analytica=self.blockchain_analytica,
@@ -271,6 +284,13 @@ class App:
         self.log.info("Bitcoind connected")
         bootstrap_height = self.connector.node_last_block - 100
 
+        if self.block_filters:
+            self.processes.append(Process(target=FilterCompressor, args=(self.psql_dsn,
+                                                                         self.block_filter_fps,
+                                                                         self.block_filter_bits,
+                                                                         self.log)))
+
+
         if self.address_state:
             self.processes.append(Process(target=AddressStateSync, args=(self.psql_dsn,
                                                                          bootstrap_height,
@@ -279,6 +299,9 @@ class App:
                                                                          self.log)))
             [p.start() for p in self.processes]
             self.tasks.append(self.loop.create_task(self.address_state_processor()))
+
+        [p.start() for p in self.processes]
+
 
 
 
@@ -308,7 +331,6 @@ class App:
 
     async def block_batch_handler(self, block):
         try:
-
             if self.block_best_timestamp < block["time"]:
                 self.block_best_timestamp = block["time"]
 
@@ -328,6 +350,8 @@ class App:
                     self.tx_map += block["txMap"]
                     self.stxo += block["stxo"]
 
+                if self.block_filters:
+                    self.filters.append((block["height"],  block["filter"]))
 
                 if self.blocks_data:
                     miner =  block["miner"]
@@ -343,6 +367,7 @@ class App:
                             "target": block["target"],
                             "targetDifficulty": block["targetDifficulty"]
                             })
+
                     self.headers.append((block["height"], s2rh(block["hash"]),
                                          block["header"], self.block_best_timestamp, miner, data))
                 else:
@@ -530,6 +555,10 @@ class App:
                         self.stxo_batches[block["height"]] = self.stxo
                         self.stxo = deque()
 
+                    if self.block_filters:
+                        self.filters_batches[block["height"]] = self.filters
+                        self.filters = deque()
+
                     if self.blockchain_analytica:
                         self.blocks_stat_batches[block["height"]] = self.blocks_stat
                         self.blocks_stat = deque()
@@ -556,6 +585,12 @@ class App:
 
                         await conn.copy_records_to_table('blocks', columns=blocks_columns, records=h_batch)
 
+                        if self.block_filters:
+                            batch = self.filters_batches.delete(height)
+                            await conn.copy_records_to_table('block_filters_uncompressed',
+                                                             columns=["height", "filter"], records=batch)
+
+
                         if self.merkle_proof:
                             transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction",
                                                    "merkle_proof"]
@@ -568,6 +603,7 @@ class App:
 
                         if height in self.tx_map_batches:
                             batch = self.tx_map_batches.delete(height)
+
                             await conn.copy_records_to_table('transaction_map',
                                                              columns=["pointer", "address", "amount"],
                                                              records=batch)
@@ -618,12 +654,13 @@ class App:
                                    "ON transaction_map USING BTREE (address, pointer);")
 
     async def create_address_utxo_index(self):
-        if self.transaction_history:
-            async with self.db_pool.acquire() as conn:
-                await conn.execute("CREATE INDEX IF NOT EXISTS address_map_utxo "
-                                   "ON connector_utxo USING BTREE (address, pointer);")
-                await conn.execute("CREATE INDEX IF NOT EXISTS address_map_uutxo "
-                                   "ON connector_unconfirmed_utxo USING BTREE (address);")
+        async with self.db_pool.acquire() as conn:
+            await conn.execute("CREATE INDEX IF NOT EXISTS address_map_utxo "
+                               "ON connector_utxo USING BTREE (address, pointer);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS address_map_utxo_pointer "
+                               "ON connector_utxo USING BTREE (pointer);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS address_map_uutxo "
+                               "ON connector_unconfirmed_utxo USING BTREE (address);")
 
 
     async def create_blocks_hash_index(self):

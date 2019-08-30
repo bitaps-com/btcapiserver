@@ -7,12 +7,10 @@ RUN apt-get -y install python3
 RUN apt-get -y install python3-pip
 RUN apt-get -y install build-essential libtool autotools-dev automake pkg-config libssl-dev libevent-dev
 RUN apt-get -y install libssl1.0-dev
-RUN pip3 install --upgrade cython
 COPY requirements.txt .
-RUN pip3 install gunicorn
 RUN pip3 install --requirement requirements.txt
-RUN mkdir /api
+RUN mkdir /test
 RUN mkdir /config
-COPY ./ ./api
+COPY ./ ./test
 WORKDIR /api
-ENTRYPOINT ["/usr/local/bin/gunicorn","-c", "/config/gunicorn.conf", "main:app"]
+ENTRYPOINT ["python3","/test/test.py"]

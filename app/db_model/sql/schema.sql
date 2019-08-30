@@ -43,3 +43,32 @@ CREATE INDEX IF NOT EXISTS tx_map_tx_id
 CREATE INDEX IF NOT EXISTS utxo_address_map_amount
  ON connector_utxo USING BTREE (address, amount);
  */
+
+
+
+create extension if not exists plpython3u;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
