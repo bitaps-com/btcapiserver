@@ -211,6 +211,231 @@ async def get_block_transactions(request):
         return web.json_response(response, dumps=json.dumps, status = status)
 
 
+
+
+
+async def get_block_range_filter_headers(request):
+    log = request.app["log"]
+    log.info("GET %s" % str(request.rel_url))
+
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+    try:
+        try:
+            start_header = request.match_info['from_filter_header']
+        except:
+            start_header = None
+
+        if start_header and len(start_header) == 64:
+            try:
+                start_header = bytes_from_hex(start_header)
+            except:
+                raise APIException(INVALID_BLOCK_POINTER, "invalid from header")
+        elif start_header is not None:
+            raise APIException(INVALID_BLOCK_POINTER, "invalid from header")
+
+        response = await block_range_filter_headers(start_header, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+async def get_block_range_filter(request):
+    log = request.app["log"]
+    log.info("GET %s" % str(request.rel_url))
+
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+    try:
+        pointer = request.match_info['filter_header']
+        if len(pointer) == 64:
+            try:
+                pointer = bytes_from_hex(pointer)
+            except:
+                raise APIException(INVALID_BLOCK_POINTER, "invalid filter header")
+        else:
+            raise APIException(INVALID_BLOCK_POINTER, "invalid filter header")
+
+        response = await block_range_filter(pointer, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+
+
+async def get_block_filter_headers(request):
+    log = request.app["log"]
+    log.info("GET %s" % str(request.rel_url))
+
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+    try:
+        pointer = request.match_info['block_pointer']
+        if len(pointer) < 12:
+            try:
+                pointer = int(pointer)
+            except:
+                raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+        elif len(pointer) == 64:
+            try:
+                pointer = s2rh(pointer)
+            except:
+                raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+        else:
+            raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+
+        try:
+           count = request.match_info['count']
+        except:
+            count = 2000
+        try:
+            count = int(count)
+            if count < 1 and count > 2000:
+                count = 2000
+        except:
+            raise APIException(PARAMETER_ERROR, "invalid count parameter")
+
+        response = await block_filter_headers(pointer, count, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+async def get_block_filters(request):
+    log = request.app["log"]
+    log.info("GET %s" % str(request.rel_url))
+
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+    try:
+        pointer = request.match_info['block_pointer']
+        if len(pointer) < 12:
+            try:
+                pointer = int(pointer)
+            except:
+                raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+        elif len(pointer) == 64:
+            try:
+                pointer = s2rh(pointer)
+            except:
+                raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+        else:
+            raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+
+        try:
+           count = request.match_info['count']
+        except:
+            count = 144
+        try:
+            count = int(count)
+            if count < 1 and count > 144:
+                count = 144
+        except:
+            raise APIException(PARAMETER_ERROR, "invalid count parameter")
+
+        response = await block_filters(pointer, count, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+async def get_block_filter(request):
+    log = request.app["log"]
+    log.info("GET %s" % str(request.rel_url))
+
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+    try:
+        pointer = request.match_info['filter_header']
+        if len(pointer) == 64:
+            try:
+                pointer = bytes_from_hex(pointer)
+            except:
+                raise APIException(INVALID_BLOCK_POINTER, "invalid filter header")
+        else:
+            raise APIException(INVALID_BLOCK_POINTER, "invalid filter header")
+
+        response = await block_filter(pointer, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 async def get_transaction_by_pointer(request):
     log = request.app["log"]
     log.info("GET %s" % str(request.rel_url))

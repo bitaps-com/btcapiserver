@@ -18,6 +18,7 @@ from modules.filter_compressor import FilterCompressor
 
 from collections import deque
 from pybtc import int_to_c_int, MRU
+from pybtc import map_into_range, siphash
 from pybtc import s2rh, rh2s, merkle_tree, merkle_proof, parse_script
 import db_model
 import os, json, sys
@@ -55,6 +56,7 @@ class App:
         self.blockchain_analytica = True if config["OPTIONS"]["blockchain_analytica"] == "on" else False
         self.blocks_data = True if config["OPTIONS"]["blocks_data"] == "on" else False
         self.transaction_history = True if config["OPTIONS"]["transaction_history"] == "on" else False
+        self.coinbase_maturity =  int(config["SYNCHRONIZATION"]["coinbase_maturity"])
 
         self.block_preload_workers = int(config["SYNCHRONIZATION"]["block_preload_workers"])
         self.block_preload_batch_size_limit = int(config["SYNCHRONIZATION"]["block_preload_batch_size"])
@@ -254,7 +256,7 @@ class App:
                                              mempool_tx=True,
                                              chain_tail=self.chain_tail,
                                              block_timeout=300,
-                                             deep_sync_limit=100,
+                                             deep_sync_limit=self.coinbase_maturity,
                                              last_block_height=self.start_checkpoint,
                                              block_cache_workers = self.block_preload_workers,
                                              block_batch_handler=self.block_batch_handler,
@@ -288,8 +290,8 @@ class App:
             self.processes.append(Process(target=FilterCompressor, args=(self.psql_dsn,
                                                                          self.block_filter_fps,
                                                                          self.block_filter_bits,
+                                                                         self.coinbase_maturity,
                                                                          self.log)))
-
 
         if self.address_state:
             self.processes.append(Process(target=AddressStateSync, args=(self.psql_dsn,
@@ -324,6 +326,9 @@ class App:
         if self.blocks_stat:
             self.blocks_stat_batches[height] = self.blocks_stat
             self.blocks_stat = deque()
+        if self.block_filters:
+            self.filters_batches[height] = self.filters
+            self.filters = deque()
 
         await self.save_batches()
 
@@ -586,9 +591,10 @@ class App:
                         await conn.copy_records_to_table('blocks', columns=blocks_columns, records=h_batch)
 
                         if self.block_filters:
-                            batch = self.filters_batches.delete(height)
-                            await conn.copy_records_to_table('block_filters_uncompressed',
-                                                             columns=["height", "filter"], records=batch)
+                            if height in self.filters_batches:
+                                batch = self.filters_batches.delete(height)
+                                await conn.copy_records_to_table('block_filters_uncompressed',
+                                                                 columns=["height", "filter"], records=batch)
 
 
                         if self.merkle_proof:
@@ -652,6 +658,8 @@ class App:
             async with self.db_pool.acquire() as conn:
                 await conn.execute("CREATE INDEX IF NOT EXISTS txmap_address_map_pointer "
                                    "ON transaction_map USING BTREE (address, pointer);")
+                await conn.execute("CREATE INDEX IF NOT EXISTS stxo_s_pointer "
+                                   "ON stxo USING BTREE (s_pointer);")
 
     async def create_address_utxo_index(self):
         async with self.db_pool.acquire() as conn:
@@ -739,6 +747,11 @@ class App:
 
         # transaction map table
         if self.transaction_history:
+            if self.block_filters:
+                await conn.execute("DELETE FROM block_filters_uncompressed WHERE height = $1 ", data["height"])
+                await conn.execute("DELETE FROM block_filters WHERE height = $1 ", data["height"])
+
+
             rows = await conn.fetch("DELETE FROM transaction_map WHERE pointer >= $1 " 
                                     "RETURNING  pointer, address, amount;",  data["height"] << 39)
 
@@ -849,19 +862,28 @@ class App:
 
 
                 # unconfirmed_transaction_map
-                if self.transaction_history:
-                    rows = await conn.fetch("DELETE FROM unconfirmed_transaction_map WHERE tx_id = ANY($1) "
-                                            "RETURNING  tx_id, pointer, address, amount;", hash_list)
-                    utxo_batch = []
-                    for row in rows:
-                        index = block["tx"].index(rh2s(row["tx_id"]))
-                        pointer = (block["height"] << 39) + (index << 20) + (row["pointer"] & 1048575)
-                        utxo_batch.append((pointer, row["address"], row["amount"]))
+                rows = await conn.fetch("DELETE FROM unconfirmed_transaction_map WHERE tx_id = ANY($1) "
+                                        "RETURNING  tx_id, pointer, address, amount;", hash_list)
+                utxo_batch = []
+                if self.block_filters:
+                    block_filter = set()
+                for row in rows:
+                    index = block["tx"].index(rh2s(row["tx_id"]))
+                    pointer = (block["height"] << 39) + (index << 20) + (row["pointer"] & 1048575)
+                    utxo_batch.append((pointer, row["address"], row["amount"]))
+                    if self.block_filters:
+                        block_filter.add(row["address"])
 
-                    # transaction map table
-                    await conn.copy_records_to_table('transaction_map',
-                                                     columns=["pointer", "address", "amount"],
-                                                     records=utxo_batch)
+                # transaction map table
+                await conn.copy_records_to_table('transaction_map',
+                                                 columns=["pointer", "address", "amount"],
+                                                 records=utxo_batch)
+                if self.block_filters:
+                    F = self.block_filter_fps * self.block_filter_capacity
+                    block_filter = bytearray(b"".join([map_into_range(siphash(e), F).to_bytes(8, byteorder="big")
+                                                             for e in block_filter]))
+                    await conn.copy_records_to_table('block_filters_uncompressed', columns=["height", "filter"],
+                                                     records=[(block["height"], block_filter)])
 
 
             # if address state table synchronized
@@ -973,6 +995,7 @@ class App:
                         else:
                             self.address_state_block = 0
                         await asyncio.sleep(20)
+
                         continue
 
                 if self.connector.app_last_block > self.address_state_block:

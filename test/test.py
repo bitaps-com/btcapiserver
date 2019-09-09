@@ -11,6 +11,6 @@ tx = testLoad.loadTestsFromModule(transaction_endpoints)
 address = testLoad.loadTestsFromModule(address_endpoints)
 
 runner = unittest.TextTestRunner(verbosity=1)
-# runner.run(block)
+runner.run(block)
 # runner.run(tx)
-runner.run(address)
+# runner.run(address)
