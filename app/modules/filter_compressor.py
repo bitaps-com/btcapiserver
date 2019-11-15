@@ -20,7 +20,7 @@ class FilterCompressor():
         self.dsn = dsn
         self.log = logger
 
-        self.batch_size =  144 * 7
+        self.batch_size =  1000
         self.map_range = 2 ** 32
 
         self.active = True
