@@ -1,15 +1,9 @@
 import asyncio
 import asyncpg
-from aiohttp import web
 from pybtc import *
 from utils import *
-from pybtc import c_int_to_int as ci2i
-from pybtc import c_int_len as cil
-from pybtc import int_to_bytes as i2b
-from pybtc import bytes_to_int as b2i
 from pybtc import rh2s
 import time
-import json
 import base64
 
 async def block_by_pointer(pointer, app):
@@ -46,7 +40,7 @@ async def block_by_pointer(pointer, app):
     block = dict()
     block["height"] = row["height"]
     block["hash"] = rh2s(row["hash"])
-    block["header"] = row["header"].hex()
+    block["header"] = base64.b64encode(row["header"]).decode()
     block["adjustedTimestamp"] = row["adjusted_timestamp"]
 
     resp = {"data": block,
@@ -68,7 +62,7 @@ async def block_headers(pointer, count, app):
                                   pointer, count + 1)
     if not rows:
         raise APIException(NOT_FOUND, "block not found", status=404)
-    resp = {"data": [row["header"].hex() for row in rows[1:]],
+    resp = {"data": [base64.b64encode(row["header"]).decode() for row in rows[1:]],
             "time": round(time.time() - q, 4)}
     return resp
 
@@ -183,9 +177,7 @@ async def block_transactions_opt_tx(pointer, option_raw_tx, limit, page, order, 
             tx["inputsAmount"] = 0
         transactions.append(tx)
     last_page = False if len(rows) > limit else True
-
     if app["transaction_history"]:
-
         async with app["db_pool"].acquire() as conn:
             rows = await conn.fetch("SELECT stxo.pointer,"
                                     "       stxo.s_pointer,"
@@ -198,7 +190,6 @@ async def block_transactions_opt_tx(pointer, option_raw_tx, limit, page, order, 
                                     "WHERE stxo.s_pointer >= $1 and "
                                     "stxo.s_pointer < $2 ;", block_height << 39, (block_height+1) << 39)
 
-        print(rows)
         for r in rows:
             s = r["s_pointer"]
             i = (s - ((s>>19)<<19))
@@ -227,7 +218,6 @@ async def block_transactions_opt_tx(pointer, option_raw_tx, limit, page, order, 
             transactions[m]["fee"] = transactions[m]["inputsAmount"] - transactions[m]["amount"]
             transactions[m]["outputsAmount"] = transactions[m]["amount"]
         transactions[0]["fee"] = 0
-
 
 
     resp = {"data": {"height": block_height,

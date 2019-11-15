@@ -14,28 +14,31 @@ def setup_routes(app):
     app.router.add_route('GET', '/rest/block/{block_pointer}', get_block_by_pointer)
     app.router.add_route('GET', '/rest/block/headers/{block_pointer}/{count}', get_block_headers)
     app.router.add_route('GET', '/rest/block/headers/{block_pointer}', get_block_headers)
-    #
+
     app.router.add_route('GET', '/rest/block/utxo/{block_pointer}', get_block_utxo) # test after sync completed
     app.router.add_route('GET', '/rest/block/transactions/{block_pointer}', get_block_transactions)
 
     if app["block_filters"]:
-        # block range filters
-
-        app.router.add_route('GET', '/rest/block/range/filter/headers/{from_filter_header}',
-                             get_block_range_filter_headers)
-
+        # block range filter headers
+        app.router.add_route('GET',
+                             '/rest/block/range/filter/headers/{from_filter_header}', get_block_range_filter_headers)
         app.router.add_route('GET', '/rest/block/range/filter/headers', get_block_range_filter_headers)
 
+        # block range filter
         app.router.add_route('GET', '/rest/block/range/filter/{filter_header}', get_block_range_filter)
 
-        # block filters
+        # block filter headers
         app.router.add_route('GET', '/rest/block/filter/headers/{block_pointer}/{count}', get_block_filter_headers)
         app.router.add_route('GET', '/rest/block/filter/headers/{block_pointer}', get_block_filter_headers)
 
+        # block filters
         app.router.add_route('GET', '/rest/block/filters/{block_pointer}', get_block_filters)
         app.router.add_route('GET', '/rest/block/filters/{block_pointer}/{count}', get_block_filters)
-
         app.router.add_route('GET', '/rest/block/filter/{filter_header}', get_block_filter)
+
+
+
+
 
 
 

@@ -138,28 +138,24 @@ AS $$
         raise Exception("DB structure invalid")
 
 
-    if app.block_filters:
-        if not app.merkle_proof:
-            app.log.critical("block_filters option required merkle_proof option enabled")
-            raise Exception("configuration invalid")
-
+    if app.block_batch_filters:
         await conn.execute(open("./db_model/sql/filters.sql",
                                 "r", encoding='utf-8').read().replace("\n", ""))
         await conn.execute("""
-                           INSERT INTO service (name, value) VALUES ('block_filters', '1')  
+                           INSERT INTO service (name, value) VALUES ('block_batch_filters', '1')  
                            ON CONFLICT(name) DO NOTHING;
                            """)
     else:
         await conn.execute("""
-                           INSERT INTO service (name, value) VALUES ('block_filters', '0') 
+                           INSERT INTO service (name, value) VALUES ('block_batch_filters', '0') 
                            ON CONFLICT(name) DO NOTHING;
                            """)
 
-    m = await conn.fetchval("SELECT service.value FROM service WHERE service.name ='block_filters' LIMIT 1;")
-    app.log.info("Option block_filters = %s" % m)
+    m = await conn.fetchval("SELECT service.value FROM service WHERE service.name ='block_batch_filters' LIMIT 1;")
+    app.log.info("Option block_batch_filters = %s" % m)
 
-    if int(m) == 1 and not app.block_filters or app.block_filters and int(m) == 0:
-        app.log.critical("block_filters config option not match db structure; you should drop db and recreate it.")
+    if int(m) == 1 and not app.block_batch_filters or app.block_batch_filters and int(m) == 0:
+        app.log.critical("block_batch_filters config option not match db structure; you should drop db and recreate it.")
         raise Exception("DB structure invalid")
 
 

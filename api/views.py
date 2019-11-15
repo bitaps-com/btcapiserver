@@ -378,8 +378,7 @@ async def get_block_filters(request):
         status = err.status
         response = {"error_code": err.err_code,
                     "message": err.message,
-                    "details": err.details
-                    }
+                    "details": err.details}
     except Exception as err:
         if request.app["debug"]:
             log.error(str(traceback.format_exc()))

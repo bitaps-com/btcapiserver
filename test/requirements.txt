@@ -1,10 +1,12 @@
 psycopg2-binary
-
+orderedset
+sortedcontainers
 
 
 
 git+https://github.com/bitaps-com/pybtc@bugfix
 requests
+
 
 
 
