@@ -1,6 +1,6 @@
-# import block_endpoints
-# import transaction_endpoints
-# import address_endpoints
+import block_endpoints
+import transaction_endpoints
+import address_endpoints
 import test_filters
 
 import unittest

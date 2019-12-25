@@ -8,7 +8,7 @@ config_file =   "/config/btcapi-server.conf"
 config = configparser.ConfigParser()
 config.read(config_file)
 postgres_dsn = config["POSTGRESQL"]["dsn"]
-option_block_batch_filters = True if config["OPTIONS"]["block_batch_filters"] == "on" else False
+option_block_batch_filters = True if config["OPTIONS"]["block_filters"] == "on" else False
 option_transaction_history = True if config["OPTIONS"]["transaction_history"] == "on" else False
 
 
@@ -31,12 +31,13 @@ class FiltersTest(unittest.TestCase):
         cursor = conn.cursor()
         h = 0
 
-        batch_size = 144 * 7
+
+        batch_size = 1000
         last_batch_height = (h // batch_size - 1) * batch_size
         h = last_batch_height + batch_size
         n_type_map_filter_type = {0: 2, 1: 4, 2: 1, 5: 8, 6: 16}
 
-
+        # h = 606962
         batch_map = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16: dict()}
         batch = {1: set(), 2: set(), 4: set(), 8: set(), 16: set()}
         element_index = {1: 0, 2: 0, 4: 0, 8: 0, 16: 0}
@@ -44,7 +45,7 @@ class FiltersTest(unittest.TestCase):
 
 
         while 1:
-            if h % (144 * 7) == 0:
+            if h % (1000) == 0:
                 batch_map = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16: dict()}
                 element_index = {1: 0, 2: 0, 4: 0, 8: 0, 16: 0}
                 batch = {1: set(), 2: set(), 4: set(), 8: set(), 16: set()}
@@ -68,14 +69,17 @@ class FiltersTest(unittest.TestCase):
 
             for row in rows:
                 ti =  (row[1] >> 20) & (2 ** 19 - 1)
-                if h == 436462:
-                    if row[0][0][0] > 1:
-                        print("-", row[0][0][0])
+
                 if row[0][0][0] not in (0,1,2,5,6):
                     continue
                 f_type = n_type_map_filter_type[row[0][0][0]]
                 if row[0][0][0] == 2:
                     k = parse_script(bytes(row[0][1:]))
+                    # print(">>>",row[0][0][0])
+                    # print(k)
+                    # print(ti)
+                    # print(row[1] & 0b11111111111111111)
+                    # print(decode_script(bytes(row[0][1:]), asm=1))
                     e = k["addressHash"][:20]
                 elif row[0][0][0] in (0, 1, 5, 6):
                     e = bytes(row[0][1:21])
@@ -143,13 +147,16 @@ class FiltersTest(unittest.TestCase):
                 if delta:
                     raise Exception("filter content error")
 
-                if last_hash[f_type]:
-                    last_hash[f_type] = sha256(last_hash[f_type] + sha256(r))
-                elif r:
-                    last_hash[f_type] = sha256(b"\00" * 32 + sha256(r))
+                if last_hash[f_type] and v:
+                    last_hash[f_type] = double_sha256(double_sha256(r) + last_hash[f_type])
+                elif v:
+                    last_hash[f_type] = double_sha256(double_sha256(r) + b"\00" * 32)
 
                 if last_hash[f_type]:
+                    if f_type == 1:
+                        print(last_hash[f_type].hex(), bytes(row[3]).hex())
                     if  last_hash[f_type] != bytes(row[3]):
+                        print(v)
                         print("filter type", f_type, "height", h)
                         print(last_hash[f_type], bytes(row[3]))
                         raise Exception("filter header hash error")
@@ -168,7 +175,8 @@ class FiltersTest(unittest.TestCase):
     def test_10k_FPR(self):
         self.false_positive_test(2, 10000)
 
-    def false_positive_test(self, f_type, address_count, batch_size = 144 * 7 , verbose = 0):
+
+    def false_positive_test(self, f_type, address_count, batch_size = 1000 , verbose = 0):
 
         print("Test filters type %s for %s monitoring addresses set:" % (f_type, address_count))
         if not option_transaction_history:
@@ -185,10 +193,11 @@ class FiltersTest(unittest.TestCase):
         addresses = dict()
         while len(addresses) < address_count:
             i = sha256(int_to_bytes(random.randint(1, 2**64)))
-            addresses[i[:6]] = i[:20]
-        # i = parse_script(address_to_script("1AbHNFdKJeVL8FRZyRZoiTzG9VCmzLrtvm"))['addressHash']
-        # addresses[i[:6]] = i[:20]
+            addresses[map_into_range(siphash(i), 2**32)] = i[:20]
+        # i = parse_script(address_to_script("1G4tVHxSEzBhFFzA7XQHtgjHfM1rpAUcV7"))['addressHash']
+        # addresses[map_into_range(siphash(i), 2 ** 32)] = i[:20]
 
+        addresses_set = set(addresses.keys())
 
         c_affected, c_affected_duplicates = 0, 0
         conn = psycopg2.connect(dsn=postgres_dsn)
@@ -202,26 +211,18 @@ class FiltersTest(unittest.TestCase):
 
         ac = 0
         hc = 0
+        bt = 0
         while 1:
             cursor.execute("SELECT type, "
                            "       block_filter.height, "
-                           "       filter,"
-                           "       blocks.hash  FROM  block_filter   "
-                           "JOIN blocks ON blocks.height = block_filter.height "
+                           "       filter  FROM  block_filter   "
                            "WHERE block_filter.height >= %s and type = %s "
-                           "ORDER BY height ASC LIMIT  %s;", (h, f_type, batch_size) )
-
-
+                           "ORDER BY height ASC LIMIT  %s;", (bt * batch_size, f_type, batch_size) )
             rows = cursor.fetchall()
+            bt += 1
             cursor.execute("commit;")
             if not rows:
                 break
-            v_0, v_1 = hash_to_random_vectors(bytes(rows[0][3]))
-            addresses_tmp = dict()
-            for key in addresses:
-                addresses_tmp[map_into_range(siphash(key, v_0, v_1), 2**32)] = addresses[key]
-            addresses_set = set(addresses_tmp.keys())
-
 
             affected, affected_duplicates = 0, 0
 
@@ -230,43 +231,31 @@ class FiltersTest(unittest.TestCase):
             batch_affected = dict()
 
             for row in rows:
-
                 r = bytes(row[2])
-                if not r:
-                    continue
-
                 stream = get_stream(r)
                 l = var_int_to_int(read_var_int(stream))
-                etts += l
                 if l:
                     elements = decode_gcs(stream.read(l))
                 else:
                     elements = []
 
-                ac += len(elements)
-                # EF = len(elements) * 784931
-                # e2 = [map_into_range(siphash(int_to_bytes(qq)), EF) for qq in elements]
-                # d = encode_gcs(e2, P=19)
-                # tts += len(d)
-                hc += 1
-
-                try:
-                    l = var_int_to_int(read_var_int(stream))
+                l = var_int_to_int(read_var_int(stream))
+                if l:
                     duplicates = decode_gcs(stream.read(l))
-                    tts +=l
-                    # hf = stream.read()
-                    # counters = decode_huffman(hf)
-                except:
-                    hf = b""
-                    duplicates, counters = [], []
-                # tts += len(hf)
+                    tts += l
+                else:
+                    duplicates = []
+
+
+                ac += len(elements)
+                hc += 1
                 etts += l
-                # etts += len(hf)
+
 
                 for a in addresses_set & set(elements):
                     affected += 1
                     batch_affected[elements.index(a) + batch_offset] = a
-                    address = hash_to_address(addresses_tmp[a], witness_version=None)
+                    address = hash_to_address(addresses[a], witness_version=None)
                     if verbose:
                         print("    affected element: ", row[1], address)
 
@@ -274,15 +263,17 @@ class FiltersTest(unittest.TestCase):
 
                     for pointer in batch_affected:
                         if pointer in duplicates:
-                            a = hash_to_address(addresses_tmp[batch_affected[pointer]],
+                            a = hash_to_address(addresses[batch_affected[pointer]],
                                                 witness_version=None)
                             if verbose:
                                 print("        affected duplicate  %s " % row[1], a)
                             affected_duplicates += 1
-                assert(row[1] == h)
-                items += len(elements) + sum(counters)
+                # print(row[1], h)
+                # assert(row[1] == h)
+                h = row[1]
+                items += len(elements) + len(duplicates)
 
-                h += 1
+                # h += 1
                 batch_offset += len(elements)
             total_items += items
             c_affected += affected

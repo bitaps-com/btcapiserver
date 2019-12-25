@@ -12,7 +12,7 @@ python-json-logger==0.1.9
 
 
 
-git+https://github.com/bitaps-com/pybtc@bugfix
+git+https://github.com/bitaps-com/pybtc@no_analityca
 git+https://github.com/bitaps-com/aiojsonrpc
 pyzmq
 

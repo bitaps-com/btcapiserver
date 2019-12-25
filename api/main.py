@@ -4,6 +4,7 @@ import sys
 import colorlog
 import model
 from routes import *
+from pybtc import LRU
 
 
 config_file =   "/config/btcapi-server.conf"
@@ -52,9 +53,9 @@ app["blockchain_analytica"] = True if config["OPTIONS"]["blockchain_analytica"] 
 app["transaction_history"] = True if config["OPTIONS"]["transaction_history"] == "on" else False
 
 app["block_filters"] = True if config["OPTIONS"]["block_filters"] == "on" else False
-app["block_filter_fps"] = int(config["OPTIONS"]["block_filter_fps"])
-app["block_filter_bits"] = int(config["OPTIONS"]["block_filter_bits"])
-app["block_filter_capacity"] = int(config["OPTIONS"]["block_filter_capacity"])
+app["merkle_tree_cache"] = LRU(1000)
+
+
 
 
 try: app["get_block_utxo_page_limit"] = int(config["API"]["get_block_utxo_page_limit"])

@@ -4,7 +4,10 @@ setproctitle==1.1.10
 configparser==3.5.0
 aiohttp==3.3.2
 asyncpg==0.16.0
-git+https://github.com/bitaps-com/pybtc@bugfix
+
+
+git+https://github.com/bitaps-com/pybtc@no_analityca
+
 colorlog==3.1.4
 git+https://github.com/bitaps-com/aiojsonrpc
 sortedcontainers

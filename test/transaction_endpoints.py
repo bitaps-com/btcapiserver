@@ -4,6 +4,7 @@ from pybtc import *
 import requests
 from pprint import pprint
 import base64
+import random
 
 config_file =   "/config/btcapi-server.conf"
 config = configparser.ConfigParser()
@@ -26,29 +27,63 @@ class TransactionsAPIEndpointsTest(unittest.TestCase):
     def test_get_transaction(self):
         print("/rest/transaction/{tx_pointer}:\n")
 
-        # r = requests.get(base_url + "/rest/transaction/ee1afca2d1130676503a6db5d6a77075b2bf71382cfdf99231f89717b5257b5b")
-        # self.assertEqual(r.status_code, 200)
-        # d = r.json()["data"]
-        # pprint(d)
-        # r = requests.get(base_url + "/rest/transaction/20:0")
-        # self.assertEqual(r.status_code, 200)
-        # d2 = r.json()["data"]
-        # self.assertEqual(d["txId"], d2["txId"])
+        r = requests.get(base_url + "/rest/transaction/ee1afca2d1130676503a6db5d6a77075b2bf71382cfdf99231f89717b5257b5b")
+        self.assertEqual(r.status_code, 200)
+        d = r.json()["data"]
+        pprint(d)
+        r = requests.get(base_url + "/rest/transaction/20:0")
+        self.assertEqual(r.status_code, 200)
+        d2 = r.json()["data"]
+        self.assertEqual(d["txId"], d2["txId"])
 
         r = requests.get(base_url + "/rest/transaction/187347da95da1e5029a33fbcbb0137c80818cb6d9a0b41a4c43d3db1c8ffa58c")
         self.assertEqual(r.status_code, 200)
         d = r.json()["data"]
         pprint(d)
 
+    def test_get_transaction_merkleproof(self):
+        print("/rest/transaction/merkleproof/{tx_pointer}:\n")
 
-        if option_merkle_proof:
-            r = requests.get(base_url + "/rest/block/" + d["blockHash"])
+        def check_mpf(tx_id, h, i, calculate = False):
+
+            if option_merkle_proof:
+                if calculate:
+                    print(h,":", i, "-> ", tx_id, " [get]: ", end="")
+                    url = "/rest/transaction/merkle_proof/%s" % tx_id
+                else:
+                    print(h,":", i, "-> ", tx_id, " [calculate]: ", end="")
+                    url = "/rest/transaction/calculate/merkle_proof/%s" % tx_id
+                r = requests.get(base_url + url)
+                result = r.json()
+                d = result["data"]
+                r = requests.get(base_url + "/rest/block/%s" % d["blockHeight"])
+                self.assertEqual(r.status_code, 200)
+                m_root = rh2s(base64.b64decode(r.json()["data"]["header"])[36:36 + 32])
+                self.assertEqual(merkle_root_from_proof(base64.b64decode(d["merkleProof"]),
+                                                        tx_id, d["blockIndex"]), m_root)
+                print("OK", result["time"])
+        for i in range(10):
+            k = random.randint(0, 600000)
+            print("block", k)
+            r = requests.get(base_url + "/rest/block/transactions/%s" % k)
             self.assertEqual(r.status_code, 200)
-            m_root = rh2s(bytes_from_hex(r.json()["data"]["header"][8 + 64:8 + 64 + 64]))
-            self.assertEqual(merkle_root_from_proof(base64.b64decode(d["merkleProof"]), d['txId'], d["blockIndex"]), m_root)
-            print("merkle proof verified ->", m_root)
+            d = r.json()["data"]
+
+            for i, t in enumerate(d):
+                check_mpf(t, k, i, False)
+                check_mpf(t, k, i, True)
+
+
+
+
+
+
 
         print("OK\n")
+
+
+
+
 
     # def test_get_transaction_hash_by_pointer(self):
     #     print("/rest/transaction/hash/by/blockchain/pointer/{tx_blockchain_pointer}:\n")

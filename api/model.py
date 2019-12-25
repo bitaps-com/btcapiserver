@@ -85,22 +85,31 @@ async def block_utxo(pointer, limit, page, order, app):
     for row in rows[:limit]:
         address = row["address"]
         address_type = SCRIPT_N_TYPES[address[0]]
-        if address[0] in (0, 1, 2, 5, 6):
+        if address[0] in (0, 1, 5, 6):
             script_hash = True if address[0] in (1,6) else False
             witness = 0 if address[0] in (1,6) else None
             address = hash_to_address(address[1:], testnet=app["testnet"],
                                       script_hash = script_hash, witness_version = witness)
+            script = address_to_script(address, hex=1)
+        elif address[0] == 2:
+            script = address[1:].hex()
+            address = script_to_address(address[1:], testnet=app["testnet"])
+        else:
+            script = address[1:].hex()
+            address = None
 
         utxo.append({"txId": rh2s(row["outpoint"][:32]),
                      "vOut": bytes_to_int(row["outpoint"][32:]),
                      "txIndex": (row["pointer"] >> 20) & 1048575,
                      "amount": row["amount"],
                      "address": address,
+                     "script": script,
                      "type": address_type})
     last_page = False if len(rows) > limit else True
     resp = {"data": utxo,
             "time": round(time.time() - q, 4),
             "lastPage": last_page}
+
     return resp
 
 async def block_transactions(pointer, limit, page, order, app):
@@ -176,6 +185,9 @@ async def block_transactions_opt_tx(pointer, option_raw_tx, limit, page, order, 
         if app["transaction_history"]:
             tx["inputsAmount"] = 0
         transactions.append(tx)
+        # print(tx["txId"])
+
+
     last_page = False if len(rows) > limit else True
     if app["transaction_history"]:
         async with app["db_pool"].acquire() as conn:
@@ -200,7 +212,7 @@ async def block_transactions_opt_tx(pointer, option_raw_tx, limit, page, order, 
             transactions[m]["inputsAmount"] += r["amount"]
             transactions[m]["vIn"][i]["blockHeight"] = r["pointer"] >> 39
             transactions[m]["vIn"][i]["confirmations"] = app["last_block"] - (r["pointer"] >> 39) + 1
-            if r["address"][0] in (0,1,2,5,6):
+            if r["address"][0] in (0,1,5,6):
                 script_hash = True if r["address"][0] in (1, 6) else False
                 witness_version = None if r["address"][0] < 5 else 0
                 transactions[m]["vIn"][i]["address"] = hash_to_address(r["address"][1:],
@@ -208,7 +220,10 @@ async def block_transactions_opt_tx(pointer, option_raw_tx, limit, page, order, 
                                                                        script_hash = script_hash,
                                                                        witness_version = witness_version)
                 transactions[m]["vIn"][i]["scriptPubKey"] = address_to_script(transactions[m]["vIn"][i]["address"],
-                                                                              hex=1)
+                                                                             hex=1)
+            elif r["address"][0] == 2:
+                transactions[m]["vIn"][i]["address"] = script_to_address(r["address"][1:], testnet=app["testnet"])
+                transactions[m]["vIn"][i]["scriptPubKey"] = r["address"][1:].hex()
             else:
                 transactions[m]["vIn"][i]["scriptPubKey"] = r["address"][1:].hex()
             transactions[m]["vIn"][i]["scriptPubKeyOpcodes"] = decode_script(transactions[m]["vIn"][i]["scriptPubKey"])
@@ -220,125 +235,169 @@ async def block_transactions_opt_tx(pointer, option_raw_tx, limit, page, order, 
         transactions[0]["fee"] = 0
 
 
-    resp = {"data": {"height": block_height,
-                     "hash": rh2s(block_row["hash"]),
-                     "header": block_row["header"].hex(),
-                     "adjustedTimestamp": block_row["adjusted_timestamp"],
-                     "time": unpack("<L", block_row["header"][68: 68+4])[0],
-                     "transactions":  transactions},
+    resp = {"data": transactions,
             "time": round(time.time() - q, 4),
             "lastPage": last_page}
     return resp
 
-async def block_range_filter_headers(start_header, app):
+
+
+async def block_filters_headers(filter_type, start_height, stop_hash, log, app):
     pool = app["db_pool"]
     q = time.time()
+    n = 0
+    type_list = []
+    while filter_type:
+        if filter_type & 1:
+            type_list.append(2 ** n)
+        n += 1
+        filter_type = filter_type >> 1
+
     async with pool.acquire() as conn:
-        if start_header:
-            stmt = await conn.prepare("SELECT height "
-                                      "FROM block_range_filters  "
-                                      "WHERE hash = $1 LIMIT 1;")
+        stmt = await conn.prepare("SELECT height "
+                                  "FROM blocks  WHERE hash = $1 LIMIT 1;")
+        stop_height = await stmt.fetchval(stop_hash)
+        if stop_height - start_height > 1999:
+            raise APIException(PARAMETER_ERROR, "only <=2000 headers per request", status=400)
 
-            h = await stmt.fetchval(start_header)
-            if h is None:
-                raise APIException(NOT_FOUND, "from header not found", status=404)
-        else:
-            h=0
-        rows = await conn.fetch("SELECT height,"
-                                "       hash " 
-                                "FROM block_range_filters  WHERE height >= $1 ORDER BY height ASC;", h)
+        if stop_height is None:
+            raise APIException(NOT_FOUND, "stop hash block not found", status=404)
 
-        r = list()
-        if h > 0:
-            s_h = rows[0]["height"]
-            for row in rows[1:]:
-                r.append({"range": [s_h + 1, row["height"]], "header": row["hash"].hex()})
-                s_h = row["height"]
-        else:
-            s_h = 0
-            for row in rows:
-                r.append({"range": [s_h + 1, row["height"]], "header": row["hash"].hex()})
-                s_h = row["height"]
+        rows = await conn.fetch("SELECT type, hash, height "
+                                "FROM block_filter  WHERE height >= $1 and height <= $2 "
+                                "and type = ANY($3) "
+                                "ORDER BY height;",
+                                start_height, stop_height, type_list)
+
+        h = dict()
+        result = []
+        for row in rows:
+            filter_type |= row["type"]
+            try:
+                h[row["height"]][row["type"]] = row["hash"]
+            except:
+                h[row["height"]] = {row["type"]: row["hash"]}
+
+        for i in range(start_height, stop_height + 1):
+            try:
+                result.append(merkle_root([h[i][j] for j in sorted(h[i].keys())]))
+            except:
+                result.append("00" * 32)
+
+        assert len(result) <= stop_height - start_height + 1
 
     if not rows:
-        raise APIException(NOT_FOUND, "headers not found", status=404)
-    resp = {"data": r,
+        raise APIException(NOT_FOUND, "blocks not found", status=404)
+    resp = {"data": {"type":filter_type,
+                     "headers": result},
             "time": round(time.time() - q, 4)}
     return resp
 
-async def block_range_filter(pointer, app):
+async def block_filters_batch_headers(filter_type, start_height, stop_hash, log, app):
     pool = app["db_pool"]
     q = time.time()
+    n = 0
+    type_list = []
+    while filter_type:
+        if filter_type & 1:
+            type_list.append(2 ** n)
+        n += 1
+        filter_type = filter_type >> 1
+
     async with pool.acquire() as conn:
-        stmt = await conn.prepare("SELECT filter "
-                                  "FROM block_range_filters  "
-                                  "WHERE hash = $1 LIMIT 1;")
+        stmt = await conn.prepare("SELECT height "
+                                  "FROM blocks  WHERE hash = $1 LIMIT 1;")
+        stop_height = await stmt.fetchval(stop_hash)
+        l = (start_height // 1000)
+        if start_height % 1000 > 0:
+            l += 1
+        l = l * 1000
+        b = [l * 1000]
+        while l < stop_height:
+            l += 1000
+            b.append(l)
+        print(b)
+        if stop_height is None:
+            raise APIException(NOT_FOUND, "stop hash block not found", status=404)
 
-        h = await stmt.fetchval(pointer)
-        if h is None:
-            raise APIException(NOT_FOUND, "filter not found", status=404)
+        rows = await conn.fetch("SELECT type, hash, height "
+                                "FROM block_filter  WHERE height = ANY($1) "
+                                "and type = ANY($2) "
+                                "ORDER BY height;",
+                                b, type_list)
 
-    resp = {"data": base64.b64encode(h).decode(),
-            "time": round(time.time() - q, 4)}
-    return resp
+        h = dict()
+        result = []
+        for row in rows:
+            filter_type |= row["type"]
+            try:
+                h[row["height"]][row["type"]] = row["hash"]
+            except:
+                h[row["height"]] = {row["type"]: row["hash"]}
 
-async def block_filter_headers(pointer, count, app):
-    pool = app["db_pool"]
-    q = time.time()
-    async with pool.acquire() as conn:
-        if isinstance(pointer, bytes):
-            stmt = await conn.prepare("SELECT height "
-                                      "FROM blocks  WHERE hash = $1 LIMIT 1;")
-            pointer = await stmt.fetchval(pointer)
+        for i in sorted(b):
+            try:
+                result.append(merkle_root([h[i][j] for j in sorted(h[i].keys())]))
+            except:
+                result.append("00" * 32)
 
-            if pointer is None:
-                raise APIException(NOT_FOUND, "block not found", status=404)
+        assert len(result) <= stop_height - start_height + 1
 
-        rows = await conn.fetch("SELECT hash "
-                                  "FROM block_filters  WHERE height >= $1 ORDER BY height ASC LIMIT $2;",
-                                  pointer, count + 1)
     if not rows:
-        raise APIException(NOT_FOUND, "block not found", status=404)
-    resp = {"data": [row["hash"].hex() for row in rows[1:]],
+        raise APIException(NOT_FOUND, "blocks not found", status=404)
+    resp = {"data": {"type":filter_type,
+                     "headers": result},
             "time": round(time.time() - q, 4)}
     return resp
 
-async def block_filters(pointer, count, app):
+async def block_filters(filter_type, start_height, stop_hash, log, app):
     pool = app["db_pool"]
     q = time.time()
+    n = 0
+    type_list = []
+    while filter_type:
+        if filter_type & 1:
+            type_list.append(2 ** n)
+        n += 1
+        filter_type = filter_type >> 1
+
     async with pool.acquire() as conn:
-        if isinstance(pointer, bytes):
-            stmt = await conn.prepare("SELECT height "
-                                      "FROM blocks  WHERE hash = $1 LIMIT 1;")
-            pointer = await stmt.fetchval(pointer)
+        stmt = await conn.prepare("SELECT height "
+                                  "FROM blocks  WHERE hash = $1 LIMIT 1;")
+        stop_height = await stmt.fetchval(stop_hash)
+        if stop_height - start_height > 999:
+            raise APIException(PARAMETER_ERROR, "only <=1000 filters per request", status=400)
 
-            if pointer is None:
-                raise APIException(NOT_FOUND, "block not found", status=404)
+        if stop_height is None:
+            raise APIException(NOT_FOUND, "stop hash block not found", status=404)
 
-        rows = await conn.fetch("SELECT filter "
-                                  "FROM block_filters  WHERE height >= $1 ORDER BY height ASC LIMIT $2;",
-                                  pointer, count + 1)
+        rows = await conn.fetch("SELECT type, filter, height "
+                                "FROM block_filter  WHERE height >= $1 and height <= $2 "
+                                "and type = ANY($3) "
+                                "ORDER BY height;",
+                                start_height, stop_height, type_list)
+
+        h = dict()
+        result = []
+        for row in rows:
+            filter_type |= row["type"]
+            try:
+                h[row["height"]][row["type"]] = base64.b64encode(row["filter"]).decode()
+            except:
+                h[row["height"]] = {row["type"]: base64.b64encode(row["filter"]).decode()}
+
+        for i in range(start_height, stop_height + 1):
+            try:
+                result.append(h[i])
+            except:
+                result.append(dict())
+
+        assert len(result) <= stop_height - start_height + 1
+
     if not rows:
-        raise APIException(NOT_FOUND, "block not found", status=404)
-
-    resp = {"data": [base64.b64encode(row["filter"]).decode() for row in rows[1:]],
-            "time": round(time.time() - q, 4)}
-    return resp
-
-
-async def block_filter(pointer, app):
-    pool = app["db_pool"]
-    q = time.time()
-    async with pool.acquire() as conn:
-        stmt = await conn.prepare("SELECT filter "
-                                  "FROM block_filters  "
-                                  "WHERE hash = $1 LIMIT 1;")
-
-        h = await stmt.fetchval(pointer)
-        if h is None:
-            raise APIException(NOT_FOUND, "filter not found", status=404)
-
-    resp = {"data": base64.b64encode(h).decode(),
+        raise APIException(NOT_FOUND, "blocks not found", status=404)
+    resp = {"data": {"type":filter_type,
+                     "filters": result},
             "time": round(time.time() - q, 4)}
     return resp
 
@@ -505,13 +564,15 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
                                
                                     "WHERE stxo.s_pointer = ANY($1);", s_pointers)
 
-        assert len(rows) == len(s_pointers)
+        if not tx["coinbase"]:
+            assert len(rows) == len(s_pointers)
 
         tx["inputsAmount"] = 0
 
         for r in rows:
             s = r["s_pointer"]
             i = (s - ((s>>19)<<19))
+
 
             tx["vIn"][i]["type"] = SCRIPT_N_TYPES[r["address"][0]]
             tx["vIn"][i]["amount"] = r["amount"]
@@ -526,18 +587,20 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
                                                           script_hash = script_hash,
                                                           witness_version = witness_version)
                 tx["vIn"][i]["scriptPubKey"] = address_to_script(tx["vIn"][i]["address"], hex=1)
+            elif r["address"][0] == 2:
+                tx["vIn"][i]["address"] = script_to_address(r["address"][1:], testnet=app["testnet"])
+                tx["vIn"][i]["scriptPubKey"] = r["address"][1:].hex()
             else:
                 tx["vIn"][i]["scriptPubKey"] = r["address"][1:].hex()
             tx["vIn"][i]["scriptPubKeyOpcodes"] = decode_script(tx["vIn"][i]["scriptPubKey"])
             tx["vIn"][i]["scriptPubKeyAsm"] = decode_script(tx["vIn"][i]["scriptPubKey"], 1)
 
+        if not tx["coinbase"]:
+            tx["fee"] = tx["inputsAmount"] - tx["amount"]
+        else:
+            tx["fee"] = 0
 
-        tx["fee"] = tx["inputsAmount"] - tx["amount"]
         tx["outputsAmount"] = tx["amount"]
-
-
-
-
 
     tx["blockHeight"] = block_height
     tx["blockIndex"] = block_index
@@ -724,10 +787,56 @@ async def tx_merkle_proof_by_pointer(pointer, app):
             if row is None:
                 raise APIException(NOT_FOUND, "transaction not found", status=404)
 
-    return {"data": {"block": row["pointer"] >> 39,
-                     "index": (row["pointer"] >> 20) & 524287,
+    return {"data": {"blockHeight": row["pointer"] >> 39,
+                     "blockIndex": (row["pointer"] >> 20) & 524287,
                      "merkleProof": base64.b64encode(row["merkle_proof"]).decode()},
             "time": round(time.time() - q, 4)}
+
+
+async def calculate_tx_merkle_proof_by_pointer(pointer, app):
+    q = time.time()
+    async with app["db_pool"].acquire() as conn:
+        if isinstance(pointer, bytes):
+            row = await conn.fetchval("SELECT pointer "
+                                      "FROM transaction "
+                                      "WHERE tx_id = $1 LIMIT 1;", pointer)
+            if row is None:
+                raise APIException(NOT_FOUND, "transaction not found", status=404)
+
+        else:
+            row = await conn.fetchval("SELECT pointer "
+                                      "FROM transaction "
+                                      "WHERE pointer = $1 LIMIT 1;", pointer)
+            if row is None:
+                raise APIException(NOT_FOUND, "transaction not found", status=404)
+
+        block_height = row >> 39
+        block_index = (row >> 20) & 524287
+
+        if not app["merkle_tree_cache"].has_key(block):
+            rows = await conn.fetch("SELECT tx_id FROM transaction "
+                                    "WHERE pointer >= $1 and pointer < $2 "
+                                    "ORDER BY pointer ASC;",
+                                    block_height << 39, (block_height + 1) << 39)
+            block_header = await conn.fetchval("SELECT header FROM blocks "
+                                               "WHERE height = $1 LIMIT 1;", block_height)
+            mrt = block_header[36:36+32]
+            hash_list = [row["tx_id"] for row in rows]
+            mt = merkle_tree(hash_list)
+            mr = merkle_root(hash_list, receive_hex=False, return_hex=False)
+            assert mrt == mr
+            app["merkle_tree_cache"][block_height] = (mt, mrt)
+
+        mrt = app["merkle_tree_cache"][block_height][1]
+        mpf = merkle_proof(app["merkle_tree_cache"][block_height][0], block_index, return_hex=False)
+        assert merkle_root_from_proof(mpf, hash_list[block_index], block_index, return_hex=False) == mrt
+
+        mpf = b''.join(mpf)
+    return {"data": {"blockHeight": block_height,
+                     "blockIndex": block_index,
+                     "merkleProof": base64.b64encode(mpf).decode()},
+            "time": round(time.time() - q, 4)}
+
 
 
 async def address_state(address, app):
@@ -743,7 +852,7 @@ async def address_state(address, app):
     if uamount is None: uamount = 0
     if camount is None: camount = 0
 
-    return {"data": {"amount": {"confirmed": int(camount),
+    return {"data": {"balance": {"confirmed": int(camount),
                                 "unconfirmed": int(uamount)}},
             "time": round(time.time() - q, 4)}
 
@@ -804,7 +913,7 @@ async def address_confirmed_utxo(address, app):
         utxo.append({"txId": rh2s(row["outpoint"][:32]),
                      "vOut": bytes_to_int(row["outpoint"][32:]),
                      "block": row["pointer"] >> 39,
-                     "txIndex": (row["pointer"] - (row["pointer"] >> 39)) >> 20,
+                     "txIndex": (row["pointer"] - ((row["pointer"] >> 39) << 39)) >> 20,
                      "amount": row["amount"]})
 
     return {"data": utxo,
