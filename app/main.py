@@ -126,7 +126,7 @@ class App:
                 async with conn.transaction():
                     await db_model.create_db_model(self, conn)
             self.log.info("Connecting to bitcoind daemon ...")
-            print(self.start_checkpoint)
+
             self.connector =  Connector(config["CONNECTOR"]["rpc"],
                                         config["CONNECTOR"]["zeromq"],
                                         connector_logger,
@@ -194,15 +194,16 @@ class App:
 
             if block["height"] > self.start_checkpoint:
 
-                tx_append = self.transactions.append
-                for t in block["rawTx"]:
-                    raw_tx = block["rawTx"][t]["rawTx"] if self.transaction else None
-                    if self.merkle_proof:
-                        tx_append(((block["height"] << 39) + (t << 20), block["rawTx"][t]["txId"],
-                                   self.block_best_timestamp, raw_tx, block["rawTx"][t]["merkleProof"]))
-                    else:
-                        tx_append(((block["height"] << 39) + (t << 20),  block["rawTx"][t]["txId"],
-                                   self.block_best_timestamp,  raw_tx))
+                if self.transaction:
+                    tx_append = self.transactions.append
+                    for t in block["rawTx"]:
+                        raw_tx = block["rawTx"][t]["rawTx"] if self.transaction else None
+                        if self.merkle_proof:
+                            tx_append(((block["height"] << 39) + (t << 20), block["rawTx"][t]["txId"],
+                                       self.block_best_timestamp, raw_tx, block["rawTx"][t]["merkleProof"]))
+                        else:
+                            tx_append(((block["height"] << 39) + (t << 20),  block["rawTx"][t]["txId"],
+                                       self.block_best_timestamp,  raw_tx))
 
                 if self.transaction_history:
                     self.tx_map += block["txMap"]
@@ -242,8 +243,9 @@ class App:
                     self.headers_batches[block["height"]] = self.headers
                     self.headers = deque()
 
-                    self.transactions_batches[block["height"]] = self.transactions
-                    self.transactions = deque()
+                    if self.transaction:
+                        self.transactions_batches[block["height"]] = self.transactions
+                        self.transactions = deque()
 
                     if self.transaction_history:
                         self.tx_map_batches[block["height"]] = self.tx_map
@@ -351,11 +353,12 @@ class App:
                                                           "address", "amount"], records=tx_map)
 
 
-            await conn.execute("""INSERT INTO unconfirmed_transaction (tx_id,
-                                                                       raw_transaction,
-                                                                       timestamp)
-                                  VALUES ($1, $2, $3);
-                                """, tx["txId"], raw_tx, int(time.time()))
+            if self.transaction:
+                await conn.execute("""INSERT INTO unconfirmed_transaction (tx_id,
+                                                                           raw_transaction,
+                                                                           timestamp)
+                                      VALUES ($1, $2, $3);
+                                    """, tx["txId"], raw_tx, int(time.time()))
         except:
             print(traceback.format_exc())
             raise
@@ -400,25 +403,25 @@ class App:
                 await conn.execute("UPDATE service SET value = $1 WHERE name = 'address_last_block'", str(data["height"]-1))
 
         # transaction table
+        if self.transaction:
+            rows = await conn.fetch("DELETE FROM transaction WHERE pointer >= $1 "
+                                    "RETURNING  tx_id,"
+                                    "           raw_transaction,"
+                                    "           pointer, "
+                                    "           timestamp;", data["height"] << 39)
+            pointer_map_tx_id = dict()
+            batch = []
+            for row in rows:
+                pointer_map_tx_id[row["pointer"]] = row["tx_id"]
+                if row["tx_id"] == data["coinbase_tx_id"]: continue
+                batch.append((row["tx_id"],
+                              row["raw_transaction"],
+                              row["timestamp"]))
 
-        rows = await conn.fetch("DELETE FROM transaction WHERE pointer >= $1 "
-                                "RETURNING  tx_id,"
-                                "           raw_transaction,"
-                                "           pointer, "
-                                "           timestamp;", data["height"] << 39)
-        pointer_map_tx_id = dict()
-        batch = []
-        for row in rows:
-            pointer_map_tx_id[row["pointer"]] = row["tx_id"]
-            if row["tx_id"] == data["coinbase_tx_id"]: continue
-            batch.append((row["tx_id"],
-                          row["raw_transaction"],
-                          row["timestamp"]))
 
-
-        await conn.copy_records_to_table('unconfirmed_transaction',
-                                         columns=["tx_id", "raw_transaction", "timestamp"],
-                                         records=batch)
+            await conn.copy_records_to_table('unconfirmed_transaction',
+                                             columns=["tx_id", "raw_transaction", "timestamp"],
+                                             records=batch)
 
 
         # transaction map table
@@ -456,36 +459,36 @@ class App:
     async def new_block_handler(self, block, conn):
         try:
             hash_list = [s2rh(t) for t in block["tx"]]
-
-            if self.merkle_proof:
-                m_tree = merkle_tree(hash_list)
-                transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction",  "merkle_proof"]
-            else:
-                transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction"]
-
-            # unconfirmed_transaction table
-            rows = await conn.fetch("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1) "
-                                    "RETURNING  tx_id, raw_transaction, timestamp;", hash_list)
-            batch = []
-            for row in rows:
-                index = block["tx"].index(rh2s(row["tx_id"]))
+            if self.transaction:
                 if self.merkle_proof:
-                    batch.append(((block["height"] << 39) + (index << 20),
-                                  row["tx_id"],
-                                  row["timestamp"],
-                                  row["raw_transaction"],
-                                  b''.join(merkle_proof(m_tree, index, return_hex=False))))
+                    m_tree = merkle_tree(hash_list)
+                    transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction",  "merkle_proof"]
                 else:
-                    batch.append(((block["height"] << 39) + (index << 20),
-                                  row["tx_id"],
-                                  row["timestamp"],
-                                  row["raw_transaction"]))
-            await conn.copy_records_to_table('transaction', columns=transaction_columns, records=batch)
+                    transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction"]
 
-            # invalid_transaction table
-            if block["mempoolInvalid"]["tx"]:
-                await conn.execute("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1);",
-                                    block["mempoolInvalid"]["tx"])
+                # unconfirmed_transaction table
+                rows = await conn.fetch("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1) "
+                                        "RETURNING  tx_id, raw_transaction, timestamp;", hash_list)
+                batch = []
+                for row in rows:
+                    index = block["tx"].index(rh2s(row["tx_id"]))
+                    if self.merkle_proof:
+                        batch.append(((block["height"] << 39) + (index << 20),
+                                      row["tx_id"],
+                                      row["timestamp"],
+                                      row["raw_transaction"],
+                                      b''.join(merkle_proof(m_tree, index, return_hex=False))))
+                    else:
+                        batch.append(((block["height"] << 39) + (index << 20),
+                                      row["tx_id"],
+                                      row["timestamp"],
+                                      row["raw_transaction"]))
+                await conn.copy_records_to_table('transaction', columns=transaction_columns, records=batch)
+
+                # invalid_transaction table
+                if block["mempoolInvalid"]["tx"]:
+                    await conn.execute("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1);",
+                                        block["mempoolInvalid"]["tx"])
 
             if self.transaction_history:
                 # invalid_transaction_map
@@ -788,16 +791,16 @@ class App:
                                 batch = self.filters_batches.delete(height)
                                 await conn.copy_records_to_table('raw_block_filters',
                                                                  columns=["height", "filter"], records=batch)
+                        if self.transaction:
+                            if self.merkle_proof:
+                                transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction",
+                                                       "merkle_proof"]
+                            else:
+                                transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction"]
 
-                        if self.merkle_proof:
-                            transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction",
-                                                   "merkle_proof"]
-                        else:
-                            transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction"]
-
-                        if tx_batch:
-                            await conn.copy_records_to_table('transaction',
-                                                             columns=transaction_columns, records=tx_batch)
+                            if tx_batch:
+                                await conn.copy_records_to_table('transaction',
+                                                                 columns=transaction_columns, records=tx_batch)
 
                         if height in self.tx_map_batches:
                             batch = self.tx_map_batches.delete(height)
@@ -840,9 +843,10 @@ class App:
         self.log.info("create indexes completed")
 
     async def create_tx_index(self):
-        async with self.db_pool.acquire() as conn:
-            await conn.execute("CREATE INDEX IF NOT EXISTS transactions_map_tx_id "
-                               "ON transaction USING BTREE (tx_id);")
+        if self.transaction:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("CREATE INDEX IF NOT EXISTS transactions_map_tx_id "
+                                   "ON transaction USING BTREE (tx_id);")
 
     async def create_tx_history_index(self):
         if self.transaction_history:
@@ -902,6 +906,7 @@ class App:
 
         self.log.info("server stopped")
         self.loop.stop()
+
 
 
 if __name__ == '__main__':

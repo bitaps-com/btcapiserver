@@ -78,7 +78,15 @@ class FilterCompressor():
                             last_batch_height = (h // batch_size) * batch_size
                             last_height = last_batch_height + batch_size - 1
                             if h != last_height:
+                                data = {'last_hash': last_hash,
+                                        'batch_map': batch_map,
+                                        'element_index': element_index}
+                                await conn.execute("INSERT INTO block_filters_batch (height, data) "
+                                                   "VALUES ($1, $2);", last_height, pickle.dumps(data))
+                                await conn.execute("VACUUM FULL raw_block_filters")
+                                await conn.execute("ANALYZE raw_block_filters")
                                 self.log.info("Block filter compressor bootsrap completed")
+
                                 self.loop.create_task(self.terminate_coroutine())
                                 self.compressor_task = None
                                 return
@@ -97,7 +105,7 @@ class FilterCompressor():
 
                     if len(blocks) != batch_size:
                         if deep_synchronization:
-                            await asyncio.sleep(10)
+                            await asyncio.sleep(1)
                             continue
 
                     elements_count, elements_size = 0, 0
@@ -186,16 +194,6 @@ class FilterCompressor():
                             await conn.execute("DELETE FROM raw_block_filters WHERE height >= $1 and height <= $2;",
                                                last_height - batch_size, last_height)
 
-                            if not deep_synchronization:
-                                data = {'last_hash': last_hash,
-                                        'batch_map': batch_map,
-                                        'element_index': element_index}
-                                await conn.execute("INSERT INTO block_filters_batch (height, data) "
-                                                   "VALUES ($1, $2);", last_height, pickle.dumps(data))
-                        await conn.execute("VACUUM FULL raw_block_filters")
-                        await conn.execute("ANALYZE raw_block_filters")
-
-
                     # stats and logs
                     total_elements_count += elements_count
                     total_elements_size += elements_size
@@ -236,7 +234,7 @@ class FilterCompressor():
                 except Exception as err:
                     self.log.error("filter compressor error: %s" % err)
                     print(traceback.format_exc())
-                    await asyncio.sleep(10)
+                    await asyncio.sleep(5)
 
         except:
             print(traceback.format_exc())

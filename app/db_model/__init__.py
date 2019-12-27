@@ -32,6 +32,8 @@ async def create_db_model(app, conn):
     # transaction
 
     if app.transaction:
+        await conn.execute(open("./db_model/sql/transaction.sql",
+                                "r", encoding='utf-8').read().replace("\n", ""))
         await conn.execute("INSERT INTO service (name,value) VALUES ('transaction','1') ON CONFLICT(name) DO NOTHING;")
     else:
         await conn.execute("INSERT INTO service (name,value) VALUES ('transaction','0') ON CONFLICT(name) DO NOTHING;")
@@ -42,8 +44,6 @@ async def create_db_model(app, conn):
     if bool(int(m)) !=  app.transaction:
         app.log.critical("transaction option not match db structure; you should drop db and recreate it")
         raise Exception("DB structure invalid")
-
-
 
 
     # merkle proof module
