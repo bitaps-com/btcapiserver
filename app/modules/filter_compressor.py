@@ -82,7 +82,9 @@ class FilterCompressor():
                                         'batch_map': batch_map,
                                         'element_index': element_index}
                                 await conn.execute("INSERT INTO block_filters_batch (height, data) "
-                                                   "VALUES ($1, $2);", last_height, pickle.dumps(data))
+                                                   "VALUES ($1, $2) ON CONFLICT(height) DO NOTHING;",
+                                                   h, pickle.dumps(data))
+
                                 await conn.execute("VACUUM FULL raw_block_filters")
                                 await conn.execute("ANALYZE raw_block_filters")
                                 self.log.info("Block filter compressor bootsrap completed")

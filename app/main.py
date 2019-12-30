@@ -68,7 +68,7 @@ class App:
 
         self.headers = deque()
         self.headers_batches = MRU()
-
+        self.save_batches_process = False
         self.filters = deque()
         self.filters_batches = MRU()
         self.filters_batch_map = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16:dict()}
@@ -305,9 +305,9 @@ class App:
                             await asyncio.sleep(60)
                             continue
 
-
                     async with conn.transaction():
-                        await conn.execute("TRUNCATE TABLE unconfirmed_transaction;")
+                        if self.transaction:
+                            await conn.execute("TRUNCATE TABLE unconfirmed_transaction;")
                         if self.transaction_history:
                             await conn.execute("TRUNCATE TABLE unconfirmed_transaction_map;")
                         await conn.execute("UPDATE service SET value = '1' WHERE name = 'bootstrap_completed';")
