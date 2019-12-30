@@ -54,9 +54,9 @@ app["transaction_history"] = True if config["OPTIONS"]["transaction_history"] ==
 
 app["block_filters"] = True if config["OPTIONS"]["block_filters"] == "on" else False
 app["merkle_tree_cache"] = LRU(1000)
-
-
-
+app["decoded_blocks_cache"] = LRU(1000)
+app["node_rpc_url"] = config["CONNECTOR"]["rpc"]
+app["rpc"] = None
 
 try: app["get_block_utxo_page_limit"] = int(config["API"]["get_block_utxo_page_limit"])
 except: app["get_block_utxo_page_limit"] = 5000

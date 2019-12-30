@@ -14,6 +14,7 @@ import json, sys
 from concurrent.futures import ThreadPoolExecutor
 from sortedcontainers import SortedSet
 import uvloop
+import gzip
 import pickle
 
 from pybtc import Connector, encode_gcs, int_to_var_int, ripemd160, double_sha256, sha256
@@ -134,6 +135,7 @@ class App:
                                         utxo_cache_size=self.utxo_cache_size,
                                         rpc_batch_limit=100,
                                         block_batch_handler = self.block_batch_handler,
+                                        watchdog_handler = self.watchdog_handler,
                                         db_type="postgresql",
                                         test_orphans=False,
                                         db=self.psql_dsn,
@@ -185,6 +187,14 @@ class App:
         #     self.tasks.append(self.loop.create_task(self.address_state_processor()))
 
         [p.start() for p in self.processes]
+
+
+
+    async def watchdog_handler(self):
+        async with self.db_pool.acquire() as conn:
+            c = await conn.fetchval("SELECT height FROM blocks order by height desc limit 1;")
+            await conn.execute("DELETE FROM block_filters_batch WHERE height < $1;", c - self.coinbase_maturity)
+            await conn.execute("ANALYZE block_filters_batch;")
 
 
     async def block_batch_handler(self, block):
@@ -533,7 +543,9 @@ class App:
             # block filters
             if self.block_filters:
                 r = await conn.fetchval("SELECT data FROM block_filters_batch WHERE height = $1", block['height'] - 1)
-                result = pickle.loads(r)
+                result = pickle.loads(gzip.decompress(r))
+
+
                 last_hash = result['last_hash']
                 batch_map = result['batch_map']
                 element_index = result['element_index']
@@ -615,9 +627,10 @@ class App:
                                                                   f)])
                 await conn.execute("INSERT INTO block_filters_batch (height, data) "
                                    "VALUES ($1, $2);", block["height"],
-                                   pickle.dumps({'last_hash': last_hash,
+                                   gzip.compress(pickle.dumps({'last_hash': last_hash,
                                                  'batch_map': batch_map,
-                                                 'element_index': element_index}))
+                                                 'element_index': element_index})))
+
 
             # if address state table synchronized
             if self.address_state:

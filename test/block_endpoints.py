@@ -93,7 +93,7 @@ class BlockAPIEndpointsTest(unittest.TestCase):
         r = requests.get(base_url + "/rest/block/utxo/0")
         self.assertEqual(r.status_code, 200)
         pprint(r.json())
-        r = requests.get(base_url + "/rest/block/utxo/100000")
+        r = requests.get(base_url + "/rest/block/utxo/100001")
         self.assertEqual(r.status_code, 200)
         pprint(r.json())
         print("OK\n")
@@ -107,9 +107,11 @@ class BlockAPIEndpointsTest(unittest.TestCase):
         for t in d:
             print("    ", t)
             if not t["coinbase"]:
-                for i in t["vIn"]:
-                    self.assertEqual("scriptPubKey" in  t["vIn"][i], True)
-            self.assertEqual(t["fee"] >= 0, True)
+                if option_transaction:
+                    for i in t["vIn"]:
+                        self.assertEqual("scriptPubKey" in  t["vIn"][i], True)
+            if option_transaction:
+                self.assertEqual(t["fee"] >= 0, True)
 
         r = requests.get(base_url + "/rest/block/last")
         self.assertEqual(r.status_code, 200)
@@ -122,15 +124,16 @@ class BlockAPIEndpointsTest(unittest.TestCase):
             s = time.time() - q
             self.assertEqual(r.status_code, 200)
             d = r.json()["data"]
-            for t in d["transactions"]:
-                if not t["coinbase"]:
-                    for i in t["vIn"]:
-                        if "scriptPubKey" not in  t["vIn"][i]:
-                            print("error:::", t, k)
-                            print(t)
-                        self.assertEqual("scriptPubKey" in  t["vIn"][i], True)
-                self.assertEqual(t["fee"] >= 0, True)
-            print(k, " block transactions %s [%s] OK" % (len(d["transactions"]), round(s,4)), r.json()["time"])
+            if option_transaction:
+                for t in d:
+                    if not t["coinbase"]:
+                        for i in t["vIn"]:
+                            if "scriptPubKey" not in  t["vIn"][i]:
+                                print("error:::", t, k)
+                                print(t)
+                            self.assertEqual("scriptPubKey" in  t["vIn"][i], True)
+                    self.assertEqual(t["fee"] >= 0, True)
+            print(k, " block transactions %s [%s] OK" % (len(d), round(s,4)), r.json()["time"])
 
 
         print("OK\n")

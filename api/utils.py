@@ -3,7 +3,9 @@ import math
 import datetime
 import pytz
 from math import ceil
-from pybtc import c_int_to_int, c_int_len, hash_to_address, parse_script, int_to_bytes, decode_script
+from pybtc import *
+
+
 NOT_FOUND = 0
 INTERNAL_SERVER_ERROR = 1
 INVALID_BLOCK_POINTER = 2
@@ -351,3 +353,34 @@ class Cache():
 
     def len(self):
         return len(self.items)
+
+def decode_block_tx(block):
+    s = get_stream(block)
+    b = dict()
+    b["amount"] = 0
+    b["size"] = int(len(block)/2)
+    b["strippedSize"] = 80
+    b["version"] = unpack("<L", s.read(4))[0]
+    b["versionHex"] = pack(">L", b["version"]).hex()
+    b["previousBlockHash"] = rh2s(s.read(32))
+    b["merkleRoot"] = rh2s(s.read(32))
+    b["time"] = unpack("<L", s.read(4))[0]
+    b["bits"] = s.read(4)
+    b["target"] = bits_to_target(unpack("<L", b["bits"])[0])
+    b["targetDifficulty"] = target_to_difficulty(b["target"])
+    b["target"] = b["target"].to_bytes(32, byteorder="little")
+    b["nonce"] = unpack("<L", s.read(4))[0]
+    s.seek(-80, 1)
+    b["header"] = s.read(80)
+    b["bits"] = rh2s(b["bits"])
+    b["target"] = rh2s(b["target"])
+    b["hash"] = double_sha256(b["header"], hex=0)
+    b["hash"] = rh2s(b["hash"])
+    b["txList"] = list()
+    b["tx"] = list()
+    for i in range(var_int_to_int(read_var_int(s))):
+        b["tx"].append(Transaction(s, format="decoded", keep_raw_tx=False))
+        b["txList"].append(b["tx"][i]["txId"])
+        b["tx"][i]["coinbase"] = False if i else True
+
+    return b

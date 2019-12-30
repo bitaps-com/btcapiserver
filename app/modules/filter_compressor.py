@@ -6,6 +6,7 @@ from collections import deque
 from pybtc import bytes_to_int, sha256, map_into_range, siphash, double_sha256
 from pybtc import ripemd160, int_to_var_int, encode_gcs
 import time
+import gzip
 import traceback
 from sortedcontainers import *
 import pickle
@@ -83,7 +84,7 @@ class FilterCompressor():
                                         'element_index': element_index}
                                 await conn.execute("INSERT INTO block_filters_batch (height, data) "
                                                    "VALUES ($1, $2) ON CONFLICT(height) DO NOTHING;",
-                                                   h, pickle.dumps(data))
+                                                   h, gzip.compress(pickle.dumps(data)))
 
                                 await conn.execute("VACUUM FULL raw_block_filters")
                                 await conn.execute("ANALYZE raw_block_filters")
