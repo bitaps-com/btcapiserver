@@ -1,0 +1,9 @@
+docker container stop btcapi-server-postgres
+docker container rm btcapi-server-postgres
+docker run --rm \
+           --name btcapi-server-postgres \
+           -v /home/ubuntu/btcapiserver/config:/config/ \
+           -v /home/ubuntu/btcapiserver/data/postgres/:/var/lib/postgresql/data/ \
+           -v /home/ubuntu/btcapiserver/data/socket/:/var/run/postgresql/ \
+           -v /home/ubuntu/btcapiserver/config/postgres.conf:/etc/postgres.conf \
+           -it btcapi-server-postgres -c config_file=/etc/postgres.conf

@@ -136,7 +136,6 @@ class App:
                                         rpc_batch_limit=100,
                                         block_batch_handler = self.block_batch_handler,
                                         watchdog_handler = self.watchdog_handler,
-                                        db_type="postgresql",
                                         test_orphans=False,
                                         db=self.psql_dsn,
                                         block_filters=self.block_filters,
@@ -160,7 +159,7 @@ class App:
             pass
         except Exception as err:
             self.log.warning("Start failed: %s" % err)
-            # print(traceback.format_exc())
+            print(traceback.format_exc())
             self.log.warning("Reconnecting ...")
             await asyncio.sleep(3)
             self.loop.create_task(self.start(config, connector_logger))
@@ -191,10 +190,11 @@ class App:
 
 
     async def watchdog_handler(self):
-        async with self.db_pool.acquire() as conn:
-            c = await conn.fetchval("SELECT height FROM blocks order by height desc limit 1;")
-            await conn.execute("DELETE FROM block_filters_batch WHERE height < $1;", c - self.coinbase_maturity)
-            await conn.execute("ANALYZE block_filters_batch;")
+        if self.block_filters:
+            async with self.db_pool.acquire() as conn:
+                c = await conn.fetchval("SELECT height FROM blocks order by height desc limit 1;")
+                await conn.execute("DELETE FROM block_filters_batch WHERE height < $1;", c - self.coinbase_maturity)
+                await conn.execute("ANALYZE block_filters_batch;")
 
 
     async def block_batch_handler(self, block):
@@ -207,7 +207,7 @@ class App:
                 if self.transaction:
                     tx_append = self.transactions.append
                     for t in block["rawTx"]:
-                        raw_tx = block["rawTx"][t]["rawTx"] if self.transaction else None
+                        raw_tx = block["rawTx"][t]["rawTx"]
                         if self.merkle_proof:
                             tx_append(((block["height"] << 39) + (t << 20), block["rawTx"][t]["txId"],
                                        self.block_best_timestamp, raw_tx, block["rawTx"][t]["merkleProof"]))
@@ -240,7 +240,8 @@ class App:
                     self.headers.append((block["height"], s2rh(block["hash"]),
                                          block["header"], self.block_best_timestamp, miner, data))
                 else:
-                    self.headers.append((block["height"], s2rh(block["hash"]), block["header"],
+                    self.headers.append((block["height"], s2rh(block["hash"]),
+                                         block["header"] + int_to_var_int(len(block["rawTx"])),
                                          self.block_best_timestamp))
 
                 batch_ready = False
@@ -266,7 +267,6 @@ class App:
                     if self.block_filters:
                         self.filters_batches[block["height"]] = self.filters
                         self.filters = deque()
-
 
                     self.loop.create_task(self.save_batches())
         except:
@@ -375,7 +375,7 @@ class App:
 
 
     async def orphan_block_handler(self, data, conn):
-
+        print("orphan block")
         if self.address_state:
             if not self.address_state_process.done():
                 self.log.debug("Wait for address state module block process completed ...")
@@ -679,7 +679,8 @@ class App:
                                              columns=["height", "hash", "header", "timestamp_received",
                                                       "adjusted_timestamp"],
                                              records=[(block["height"], s2rh(block["hash"]),
-                                                       block["header"], int(time.time()), self.block_best_timestamp)])
+                                                       block["header"] + int_to_var_int(len(block["tx"])),
+                                                       int(time.time()), self.block_best_timestamp)])
 
         except:
             print(traceback.format_exc())
@@ -952,9 +953,7 @@ if __name__ == '__main__':
         connector_log_level = logging.DEBUG
 
     ch = logging.StreamHandler()
-    formatter = colorlog.ColoredFormatter('%(log_color) s%(asctime)s: %(message)s')
-    formatter = colorlog.ColoredFormatter(
-        '%(log_color)s%(asctime)s %(levelname)s: %(message)s (%(module)s:%(lineno)d)')
+    formatter = colorlog.ColoredFormatter('%(log_color)s%(asctime)s %(levelname)s: %(message)s (%(module)s:%(lineno)d)')
     ch.setFormatter(formatter)
     logger.addHandler(ch)
     logger_connector.addHandler(ch)
@@ -992,7 +991,7 @@ if __name__ == '__main__':
         try:
             connector_log_level = log_level_map[config["CONNECTOR"]["log_level"]]
         except:
-            pass
+            connector_log_level = logging.ERROR
 
         try:
             log_level = log_level_map[config["SERVER"]["log_level"]]
@@ -1018,4 +1017,3 @@ if __name__ == '__main__':
     if pending:
         loop.run_until_complete(asyncio.wait(pending))
     loop.close()
-

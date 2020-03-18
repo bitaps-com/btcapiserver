@@ -1,0 +1,13 @@
+pyzmq
+uvloop
+setproctitle==1.1.10
+configparser==3.5.0
+aiohttp
+asyncpg
+git+https://github.com/bitaps-com/pybtc@no_analityca
+colorlog
+aiodns
+aiosocks
+geoip2
+pympler
+

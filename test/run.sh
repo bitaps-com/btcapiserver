@@ -6,4 +6,4 @@ docker run --rm \
            -v /home/ubuntu/btcapiserver/config:/config/ \
            -v /home/ubuntu/btcapiserver/test:/test \
            --net=host \
-           -it btcapi-test
+           -it btcapi-test -v -s

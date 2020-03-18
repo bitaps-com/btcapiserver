@@ -1,9 +1,7 @@
 psycopg2-binary
 orderedset
 sortedcontainers
-
-
-
+pytest>=3.9.1
 git+https://github.com/bitaps-com/pybtc@bugfix
 requests
 

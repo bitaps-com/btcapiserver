@@ -382,7 +382,6 @@ async def create_db_model(app, conn):
     app.log.info("Option hot_wallet = 0")
 
     start_block = await conn.fetchval("SELECT height FROM blocks ORDER BY height DESC LIMIT 1;")
-    print(start_block)
     app.start_checkpoint = -1 if start_block is None else start_block
 
 

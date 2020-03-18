@@ -6,7 +6,7 @@ from pprint import pprint
 import base64
 import random
 
-config_file =   "/config/btcapi-server.conf"
+config_file =   "../config/btcapi-server.conf"
 config = configparser.ConfigParser()
 config.read(config_file)
 

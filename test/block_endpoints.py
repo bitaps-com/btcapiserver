@@ -6,7 +6,7 @@ import zlib
 import requests
 from pprint import pprint
 
-config_file =   "/config/btcapi-server.conf"
+config_file =   "../config/btcapi-server.conf"
 config = configparser.ConfigParser()
 config.read(config_file)
 

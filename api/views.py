@@ -192,7 +192,7 @@ async def get_block_transactions(request):
                 option_raw_tx = True
         except:
             option_raw_tx = False
-        response = await block_transactions_opt_tx(pointer, option_raw_tx, limit, page, order, request.app)
+        response = await block_transactions(pointer, option_raw_tx, limit, page, order, request.app)
 
         status = 200
     except APIException as err:
@@ -215,21 +215,29 @@ async def get_block_transactions_list(request):
                 "message": "internal server error",
                 "details": ""}
     parameters = request.rel_url.query
-
     try:
-        limit = int(parameters["limit"])
-        if  not (limit > 0 and limit <= request.app["get_block_tx_page_limit"]): raise Exception()
-    except: limit = request.app["get_block_tx_page_limit"]
+        if not request.app["transaction"]:
+            raise APIException(UNAVAILABLE_METHOD, "unavailable method")
 
-    try:
-        page = int(parameters["page"])
-        if page <= 0: raise Exception()
-    except: page = 1
+        try:
+            limit = int(parameters["limit"])
+            if not (limit > 0 and limit <= request.app["get_block_tx_page_limit"]):
+                raise Exception()
+        except:
+            limit = request.app["get_block_tx_page_limit"]
 
-    try: order = "asc" if parameters["order"] == "desc" else "desc"
-    except: order = "asc"
+        try:
+            page = int(parameters["page"])
+            if page <= 0:
+                raise Exception()
+        except:
+            page = 1
 
-    try:
+        try:
+            order = "asc" if parameters["order"] == "desc" else "desc"
+        except:
+            order = "asc"
+
         pointer = request.match_info['block_pointer']
         if len(pointer) < 12:
             try:
@@ -244,7 +252,7 @@ async def get_block_transactions_list(request):
         else:
             raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
 
-        response = await block_transactions(pointer, limit, page, order, request.app)
+        response = await block_transaction_id_list(pointer, limit, page, order, request.app)
 
         status = 200
     except APIException as err:
@@ -502,12 +510,11 @@ async def get_transaction_by_pointer_list(request):
                 "message": "internal server error",
                 "details": ""}
 
-    if request.app["transaction"]:
-        try:
-            if request.rel_url.query['raw_tx'] in ('True','1'):
-                option_raw_tx = True
-        except:
-            option_raw_tx = False
+    try:
+        if request.rel_url.query['raw_tx'] in ('True','1'):
+            option_raw_tx = True
+    except:
+        option_raw_tx = False
 
 
     try:

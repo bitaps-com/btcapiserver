@@ -7,7 +7,7 @@ from routes import *
 from pybtc import LRU
 
 
-config_file =   "/config/btcapi-server.conf"
+config_file =   "../config/btcapi-server.conf"
 log_level = logging.WARNING
 logger = colorlog.getLogger('API')
 config = configparser.ConfigParser()
@@ -54,7 +54,8 @@ app["transaction_history"] = True if config["OPTIONS"]["transaction_history"] ==
 
 app["block_filters"] = True if config["OPTIONS"]["block_filters"] == "on" else False
 app["merkle_tree_cache"] = LRU(1000)
-app["decoded_blocks_cache"] = LRU(1000)
+app["block_transactions"] = LRU(500)
+app["block_transaction_id_list"] = LRU(500)
 app["node_rpc_url"] = config["CONNECTOR"]["rpc"]
 app["rpc"] = None
 

@@ -5,7 +5,7 @@ import requests
 import zlib
 from pprint import pprint
 import psycopg2
-config_file =   "/config/btcapi-server.conf"
+config_file =   "../config/btcapi-server.conf"
 config = configparser.ConfigParser()
 config.read(config_file)
 
