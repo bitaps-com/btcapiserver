@@ -25,6 +25,7 @@ from pybtc import s2rh, rh2s, merkle_tree, merkle_proof, parse_script
 
 import db_model
 from modules.filter_compressor import FilterCompressor
+from modules.address_state import AddressStateSync
 from utils import log_level_map, deserialize_address_data, serialize_address_data
 
 
@@ -172,18 +173,24 @@ class App:
             return
 
         self.log.info("Bitcoind connected")
-        # bootstrap_height = self.connector.node_last_block - 100
+
+        bootstrap_height = self.connector.node_last_block - self.coinbase_maturity
+        if bootstrap_height < 0:
+            bootstrap_height = 0
 
         if self.block_filters:
             self.processes.append(Process(target=FilterCompressor, args=(self.psql_dsn, self.log)))
 
-        # if self.address_state:
-        #     self.processes.append(Process(target=AddressStateSync, args=(self.psql_dsn,
-        #                                                                  bootstrap_height,
-        #                                                                  self.address_timeline,
-        #                                                                  self.blockchain_analytica,
-        #                                                                  self.log)))
-        #     self.tasks.append(self.loop.create_task(self.address_state_processor()))
+        if self.address_state:
+            pass
+            # self.processes.append(Process(target=AddressStateSync, args=(self.psql_dsn,
+            #                                                              bootstrap_height,
+            #                                                              self.address_timeline,
+            #                                                              self.blockchain_analytica,
+            #                                                              self.log)))
+            # self.tasks.append(self.loop.create_task(self.address_state_processor()))
+
+
 
         [p.start() for p in self.processes]
 
@@ -225,20 +232,23 @@ class App:
                 if self.blocks_data:
                     miner =  block["miner"]
                     data = json.dumps({"version": block["version"],
-                            "previousBlockHash": block["previousBlockHash"],
-                            "merkleRoot": block["merkleRoot"],
-                            "bits": block["bits"],
-                            "nonce": block["nonce"],
-                            "weight": block["weight"],
-                            "size": block["size"],
-                            "strippedSize": block["strippedSize"],
-                            "amount": block["amount"],
-                            "target": block["target"],
-                            "targetDifficulty": block["targetDifficulty"]
-                            })
+                                        "previousBlockHash": block["previousBlockHash"],
+                                        "merkleRoot": block["merkleRoot"],
+                                        "bits": block["bits"],
+                                        "nonce": block["nonce"],
+                                        "weight": block["weight"],
+                                        "size": block["size"],
+                                        "strippedSize": block["strippedSize"],
+                                        "amount": block["amount"],
+                                        "target": block["target"],
+                                        "targetDifficulty": block["targetDifficulty"]
+                                        })
+
+
 
                     self.headers.append((block["height"], s2rh(block["hash"]),
-                                         block["header"], self.block_best_timestamp, miner, data))
+                                         block["header"] + int_to_var_int(len(block["rawTx"])),
+                                         self.block_best_timestamp, miner, data))
                 else:
                     self.headers.append((block["height"], s2rh(block["hash"]),
                                          block["header"] + int_to_var_int(len(block["rawTx"])),
@@ -373,7 +383,6 @@ class App:
             print(traceback.format_exc())
             raise
 
-
     async def orphan_block_handler(self, data, conn):
         print("orphan block")
         if self.address_state:
@@ -464,7 +473,6 @@ class App:
         if self.address_state:
             if self.address_state_block == data["height"]:
                 self.address_state_block -= 1
-
 
     async def new_block_handler(self, block, conn):
         try:
@@ -835,8 +843,8 @@ class App:
                             await conn.copy_records_to_table('blocks_stat',
                                                              columns=["height", "block", "blockchain"],
                                                              records=h_batch)
-
-                    self.connector.app_last_block = height
+                    if self.connector.app_last_block < height:
+                        self.connector.app_last_block = height
 
         except asyncio.CancelledError:
             self.log.debug("save_to_db process canceled")

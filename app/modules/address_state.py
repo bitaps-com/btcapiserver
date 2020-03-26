@@ -93,7 +93,7 @@ class AddressStateSync():
 
     async def start(self):
         try:
-            self.db_pool = await asyncpg.create_pool(dsn=self.dsn, min_size=1, max_size=30)
+            self.db_pool = await asyncpg.create_pool(dsn=self.dsn, min_size=1, max_size=10)
             self.log.info("Address state sync module started")
             self.synchronization_task = self.loop.create_task(self.synchronization())
         except Exception as err:
@@ -101,99 +101,23 @@ class AddressStateSync():
             await asyncio.sleep(3)
             self.loop.create_task(self.start())
 
-    async def is_synchronized(self):
+    async def is_bootstrapped(self):
         async with self.db_pool.acquire() as conn:
+            self.last_block = await conn.fetchval("SELECT value FROM service WHERE "
+                                                  "name = 'address_last_block' LIMIT 1;")
             if self.last_block is None:
                 await conn.execute("TRUNCATE TABLE address;")
-                await conn.execute("TRUNCATE TABLE address_payments;")
-                await conn.execute("TRUNCATE TABLE address_daily;")
-                await conn.execute("TRUNCATE TABLE address_monthly;")
-                await conn.execute("TRUNCATE TABLE blocks_addresses_stat;")
-                await conn.execute("""
-                                      UPDATE service SET value = $1
-                                      WHERE name =  'address_last_block';
-                                   """, str(0))
+                if self.timeline:
+                    await conn.execute("TRUNCATE TABLE address_payments;")
+                    await conn.execute("TRUNCATE TABLE address_daily;")
+                    await conn.execute("TRUNCATE TABLE address_monthly;")
+                if self.blockchain_analytica:
+                    await conn.execute("TRUNCATE TABLE blocks_addresses_stat;")
+
                 self.last_block = 0
-            # self.last_block = await conn.fetchval("SELECT value FROM service WHERE "
-            #                                       "name = 'address_last_block' LIMIT 1;")
-            # self.last_block = int(self.last_block)
-            a = await conn.fetchval("SELECT value FROM service WHERE "
-                                                  "name = 'bootstrap_completed' LIMIT 1;")
-            if a == '1':
-                self.bootstrap_completed = True
-                return True
+                return False
+            return True
 
-            return False
-
-    async def get_tx_map_batch(self, offset, limit):
-        async with self.db_pool.acquire() as conn:
-            rows = await conn.fetch("SELECT pointer, address, amount FROM transaction_map "
-                                    "WHERE pointer > $1 OFFSET $2 LIMIT $3;", self.last_pointer,
-                                    offset * limit, limit)
-        return rows
-
-
-    async def get_tx_map(self):
-        rows = list()
-        if not self.bootstrap_completed:
-            c = ceil(self.tx_map_limit/self.threads)
-            tasks = [self.loop.create_task(self.get_tx_map_batch(i, c)) for i in range(self.threads)]
-            await asyncio.wait(tasks)
-            for pt in tasks:
-                for r in pt.result():
-                    rows.append(r)
-        else:
-            # complete recent block
-            async with self.db_pool.acquire() as conn:
-                rw = await conn.fetch("SELECT pointer, address, amount FROM transaction_map "
-                                        "WHERE pointer > $1 and pointer < $2;", self.last_pointer,
-                                        (((self.last_pointer >> 39)+1) << 39))
-            [rows.append(r) for r in rw]
-        affected_blocks = set()
-
-        load_add = self.load.add
-
-        for row in rows:
-            if not self.new_address.has_key(row["address"]) \
-                and not self.existed_address.has_key(row["address"]):
-                load_add(row["address"])
-            affected_blocks.add(row["pointer"] >> 39)
-
-        if rows:
-            self.last_pointer = row["pointer"]
-
-
-
-        if affected_blocks:
-            async with self.db_pool.acquire() as conn:
-                xrows = await conn.fetch("SELECT height, adjusted_timestamp  FROM blocks "
-                                        "WHERE height = ANY($1);", affected_blocks)
-            self.blocks_map_time = dict()
-            for row in xrows:
-                self.blocks_map_time[row["height"]] = row["adjusted_timestamp"]
-        return rows
-
-    async def load_addresses_batch(self, batch):
-        async with self.db_pool.acquire() as conn:
-            a_rows = await conn.fetch("""
-                                         SELECT  address, data FROM address  
-                                         WHERE address = ANY($1);
-                                      """, batch)
-            for row in a_rows:
-                self.existed_address[row["address"]] = row["data"]
-        return len(a_rows)
-
-    async def load_addresses(self):
-        self.requested_addresses += len(self.load)
-        batches = chunks(self.load, self.threads, 20000)
-        tasks = [self.loop.create_task(self.load_addresses_batch(b)) for b in batches]
-        count = 0
-        if tasks:
-            await asyncio.wait(tasks)
-            for task in tasks:
-                count += task.result()
-
-        self.loaded_addresses += count
 
     async def synchronization(self):
         new_records = deque()
@@ -202,9 +126,14 @@ class AddressStateSync():
         daily_records = deque()
         monthly_records = deque()
         address_stat_records = deque()
-        while (self.last_block is None or self.last_block < self.bootstrap_height) \
-                and not self.bootstrap_completed:
+        is_bootstrapped = await self.is_bootstrapped()
+        if is_bootstrapped:
+            self.log.info("Address state bootstrap completed on block %s  " % self.last_block)
+            return
 
+
+        while self.last_block < self.bootstrap_height:
+            print(">>", self.last_block)
             try:
                 self.load = set()
                 s = self.loop.create_task(self.save_records(new_records))
@@ -214,19 +143,10 @@ class AddressStateSync():
                 mr = self.loop.create_task(self.save_monthly_records(monthly_records))
                 ad = self.loop.create_task(self.save_address_stat_records(address_stat_records))
 
-                is_synchronized = await self.is_synchronized()
-                if is_synchronized:
-                    await asyncio.wait([s, u, h, d, mr, ad])
-                    new_records = deque()
-                    existed_records = deque()
-                    address_payments = deque()
-                    daily_records = deque()
-                    monthly_records = deque()
-                    address_stat_records = deque()
-                    continue
-
                 # get tx_map records
                 m = self.loop.create_task(self.get_tx_map())
+
+
                 await asyncio.wait([s, u, h, d, mr, ad, m])
                 tx_map = m.result()
 
@@ -251,42 +171,41 @@ class AddressStateSync():
                     block_height = row["pointer"] >> 39
 
 
-                    while self.last_block < block_height:
-                        if self.blockchain_analytica:
-                            block_stat = json.dumps(self.block_addresses_stat)
-                            blockchain_stat = json.dumps(self.blockchain_addresses_stat)
-                            address_stat_records.append((block_height, block_stat, blockchain_stat))
-                            self.block_addresses_stat = {
-                                "inputs": {"count": {"total": 0, "reused": 0},
-                                           "amount": {"map": {"count": dict(),
-                                                              "amount": dict()}}
+                    # while self.last_block < block_height:
+                    #     if self.blockchain_analytica:
+                    #         block_stat = json.dumps(self.block_addresses_stat)
+                    #         blockchain_stat = json.dumps(self.blockchain_addresses_stat)
+                    #         address_stat_records.append((block_height, block_stat, blockchain_stat))
+                    #         self.block_addresses_stat = {
+                    #             "inputs": {"count": {"total": 0, "reused": 0},
+                    #                        "amount": {"map": {"count": dict(),
+                    #                                           "amount": dict()}}
+                    #
+                    #                        },
+                    #             "outputs": {"count": {"total": 0, "new": 0},
+                    #                         "amount": {"map": {"count": dict(),
+                    #                                            "amount": dict()}}
+                    #                         }
+                    #         }
+                    #     self.last_block += 1
 
-                                           },
-                                "outputs": {"count": {"total": 0, "new": 0},
-                                            "amount": {"map": {"count": dict(),
-                                                               "amount": dict()}}
-                                            }
-                            }
-                        self.last_block += 1
+                    if self.timeline:
+                        day = ceil(self.blocks_map_time[block_height] / 86400)
+                        d = datetime.datetime.fromtimestamp(self.blocks_map_time[block_height],
+                                                            datetime.timezone.utc)
+                        month = 12 * d.year + d.month
 
+                        if self.day < day:
+                            for a in self.address_daily:
+                                daily_records.append((a, self.day, self.address_daily[a]))
+                            self.address_daily = dict()
+                            self.day = day
 
-
-                    day = ceil(self.blocks_map_time[block_height] / 86400)
-                    d = datetime.datetime.fromtimestamp(self.blocks_map_time[block_height],
-                                                        datetime.timezone.utc)
-                    month = 12 * d.year + d.month
-
-                    if self.day < day:
-                        for a in self.address_daily:
-                            daily_records.append((a, self.day, self.address_daily[a]))
-                        self.address_daily = dict()
-                        self.day = day
-
-                    if self.month < month:
-                        for a in self.address_monthly:
-                            monthly_records.append((a, self.month, self.address_monthly[a]))
-                        self.address_monthly = dict()
-                        self.month = month
+                        if self.month < month:
+                            for a in self.address_monthly:
+                                monthly_records.append((a, self.month, self.address_monthly[a]))
+                            self.address_monthly = dict()
+                            self.month = month
 
                     try:
                         try:
@@ -299,7 +218,7 @@ class AddressStateSync():
                                 # sending tx
                                 v = serialize_address_data(rc + 1, ra + row["amount"], c + 1, sc, sa, dc)
                                 self.new_address[row["address"]] = v
-                        except:
+                        except KeyError:
                             rc, ra, c, sc, sa, dc = deserialize_address_data(self.existed_address[row["address"]])
                             if not row["pointer"] & 524288:
                                 # receiving tx
@@ -309,13 +228,14 @@ class AddressStateSync():
                                 # sending tx
                                 v = serialize_address_data(rc + 1, ra + row["amount"], c + 1, sc, sa, dc)
                                 self.existed_address[row["address"]] = v
+
                         if self.timeline and rc + sc > 50:
                             address_payments.append((row["pointer"], v))
-                            self.address_daily[row["address"]] = v
-                            self.address_monthly[row["address"]] = v
+                            if self.timeline:
+                                self.address_daily[row["address"]] = v
+                                self.address_monthly[row["address"]] = v
 
-
-                    except:
+                    except KeyError:
                         # receiving tx
                         amount = row["amount"]
                         self.new_address[row["address"]] = serialize_address_data(1, amount, 1, 0, 0, 0)
@@ -370,6 +290,11 @@ class AddressStateSync():
                             except:
                                 self.blockchain_addresses_stat["txCount"]["map"]["count"][rtx_key] = 1
 
+                    except:
+                        print(traceback.format_exc())
+
+                    if self.last_block < block_height:
+                        self.last_block = block_height
 
 
                 new_records = deque()
@@ -385,8 +310,6 @@ class AddressStateSync():
                     else:
                         a, v = self.existed_address.pop()
                         existed_records_append((a, v))
-
-
 
 
                 self.log.info("Address state synchronization -> %s  " % self.last_block)
@@ -412,10 +335,89 @@ class AddressStateSync():
             except:
                 print(traceback.format_exc())
 
-
-        await self.flush_cache()
-        self.log.warning("Address synchronization completed")
+        if self.last_block >= self.bootstrap_height:
+            await self.flush_cache()
+            self.log.warning("Address synchronization completed")
         self.loop.create_task(self.terminate_coroutine())
+
+
+
+    async def get_tx_map_batch(self, offset, limit):
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch("SELECT pointer, address, amount FROM transaction_map "
+                                    "WHERE pointer > $1 AND pointer < $2 OFFSET $3 LIMIT $4;",
+                                    self.last_pointer,
+                                    self.bootstrap_height << 39,
+                                    offset * limit, limit)
+        return rows
+
+
+    async def get_tx_map(self):
+        rows = list()
+        # if not self.bootstrap_completed:
+        #     c = ceil(self.tx_map_limit/self.threads)
+        #     tasks = [self.loop.create_task(self.get_tx_map_batch(i, c)) for i in range(self.threads)]
+        #     await asyncio.wait(tasks)
+        #     for pt in tasks:
+        #         for r in pt.result():
+        #             rows.append(r)
+        # else:
+        #     # complete recent block
+        #     async with self.db_pool.acquire() as conn:
+        #         rw = await conn.fetch("SELECT pointer, address, amount FROM transaction_map "
+        #                                 "WHERE pointer > $1 and pointer < $2;", self.last_pointer,
+        #                                 (((self.last_pointer >> 39)+1) << 39))
+        #     [rows.append(r) for r in rw]
+
+        c = ceil(self.tx_map_limit / self.threads)
+        tasks = [self.loop.create_task(self.get_tx_map_batch(i, c)) for i in range(self.threads)]
+        await asyncio.wait(tasks)
+        for pt in tasks:
+            for r in pt.result():
+                rows.append(r)
+
+
+        affected_blocks = set()
+        load_add = self.load.add
+
+        if rows:
+            for row in rows:
+                if not self.new_address.has_key(row["address"]) \
+                    and not self.existed_address.has_key(row["address"]):
+                    load_add(row["address"])
+                affected_blocks.add(row["pointer"] >> 39)
+            self.last_pointer = rows[-1]["pointer"]
+
+        if affected_blocks:
+            async with self.db_pool.acquire() as conn:
+                xrows = await conn.fetch("SELECT height, adjusted_timestamp  FROM blocks "
+                                        "WHERE height = ANY($1);", affected_blocks)
+            self.blocks_map_time = dict()
+            for row in xrows:
+                self.blocks_map_time[row["height"]] = row["adjusted_timestamp"]
+        return rows
+
+    async def load_addresses_batch(self, batch):
+        async with self.db_pool.acquire() as conn:
+            a_rows = await conn.fetch("""
+                                         SELECT  address, data FROM address  
+                                         WHERE address = ANY($1);
+                                      """, batch)
+            for row in a_rows:
+                self.existed_address[row["address"]] = row["data"]
+        return len(a_rows)
+
+    async def load_addresses(self):
+        self.requested_addresses += len(self.load)
+        batches = chunks(self.load, self.threads, 20000)
+        tasks = [self.loop.create_task(self.load_addresses_batch(b)) for b in batches]
+        count = 0
+        if tasks:
+            await asyncio.wait(tasks)
+            for task in tasks:
+                count += task.result()
+
+        self.loaded_addresses += count
 
 
 
@@ -445,9 +447,10 @@ class AddressStateSync():
             self.timeline_records += len(batch)
 
     async def save_daily_records_batch(self, batch):
-        async with self.db_pool.acquire() as conn:
-            await conn.copy_records_to_table('address_daily', columns=["address", "day", "data"],
-                                             records=batch)
+        if batch:
+            async with self.db_pool.acquire() as conn:
+                await conn.copy_records_to_table('address_daily', columns=["address", "day", "data"],
+                                                 records=batch)
 
     async def save_daily_records(self, batch):
         if batch:
@@ -457,9 +460,10 @@ class AddressStateSync():
             self.saved_daily_records += len(batch)
 
     async def save_monthly_records_batch(self, batch):
-        async with self.db_pool.acquire() as conn:
-            await conn.copy_records_to_table('address_monthly', columns=["address", "month", "data"],
-                                             records=batch)
+        if batch:
+            async with self.db_pool.acquire() as conn:
+                await conn.copy_records_to_table('address_monthly', columns=["address", "month", "data"],
+                                                 records=batch)
 
     async def save_monthly_records(self, batch):
         if batch:

@@ -23,6 +23,10 @@ def setup_routes(app):
     app.router.add_route('GET', '/rest/address/utxo/{address}', get_address_confirmed_utxo)
     app.router.add_route('GET', '/rest/address/unconfirmed/utxo/{address}', get_address_unconfirmed_utxo)
 
+    if app["blocks_data"]:
+        app.router.add_route('GET', '/rest/block/data/last', get_block_data_last)
+        app.router.add_route('GET', '/rest/block/data/{block_pointer}', get_block_data_by_pointer)
+
 
     if app["transaction"]:
         app.router.add_route('GET', '/rest/block/transactions/{block_pointer}', get_block_transactions)
@@ -33,7 +37,7 @@ def setup_routes(app):
         app.router.add_route('GET', '/rest/transaction/hash/by/pointer/{tx_blockchain_pointer}',
                              get_transaction_hash_by_pointer)
         app.router.add_route('POST', '/rest/transactions/hash/by/blockchain/pointer/list',
-                             get_transactions_hash_by_pointer)
+                             get_transaction_hash_by_pointers)
 
         if app["merkle_proof"]:
             app.router.add_route('GET', '/rest/transaction/merkle_proof/{tx_pointer}', get_transaction_merkle_proof)

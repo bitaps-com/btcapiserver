@@ -1,15 +1,6 @@
 import requests
 from pybtc import *
 
-# """
-# /rest/transactions/by/pointer/list
-
-# /rest/transactions/hash/by/pointer/list
-# """
-
-import requests
-from pybtc import *
-
 
 def test_get_transaction(conf):
     if not conf["option_transaction"]:
@@ -77,42 +68,52 @@ def test_get_transaction(conf):
     r = requests.get(conf["base_url"] +
                      "/rest/transaction/f44e31829bd6424c932bee7cc0aa0e4730403b8be3e956ed7d5a67e001cfb804")
     assert r.status_code == 200
-    d = r.json()["data"]
-    
+    d_1 = r.json()["data"]
+
+    r = requests.get(conf["base_url"] + "/rest/transaction/621860:1373")
+    assert r.status_code == 200
+    d_2 = r.json()["data"]
+
     t = Transaction(tx, testnet=conf["testnet"])
-    assert t["txId"] == d["txId"]
-    assert t["hash"] == d["hash"]
-    assert t["version"] == d["version"]
-    assert t["size"] == d["size"]
-    assert t["vSize"] == d["vSize"]
-    assert t["bSize"] == d["bSize"]
-    assert t["lockTime"] == d["lockTime"]
-    assert t["weight"] == d["weight"]
-    assert t["data"] == d["data"]
-    assert t["coinbase"] == d["coinbase"]
-    assert t["segwit"] == d["segwit"]
-    assert t["amount"] == d["amount"]
-    for i in t["vIn"]:
-        assert t["vIn"][i]["txId"] == d["vIn"][str(i)]["txId"]
-        assert t["vIn"][i]["vOut"] == d["vIn"][str(i)]["vOut"]
-        assert t["vIn"][i]["scriptSig"] == d["vIn"][str(i)]["scriptSig"]
-        assert t["vIn"][i]["sequence"] == d["vIn"][str(i)]["sequence"]
-        if "txInWitness" in t["vIn"][i]:
-            assert t["vIn"][i]["txInWitness"] == d["vIn"][str(i)]["txInWitness"]
-        if not t["coinbase"]:
-            assert t["vIn"][i]["scriptSigOpcodes"] == d["vIn"][str(i)]["scriptSigOpcodes"]
-            assert t["vIn"][i]["scriptSigAsm"] == d["vIn"][str(i)]["scriptSigAsm"]
-    for i in t["vOut"]:
-        assert t["vOut"][i]["value"] == d["vOut"][str(i)]["value"]
-        assert t["vOut"][i]["scriptPubKey"] == d["vOut"][str(i)]["scriptPubKey"]
-        assert t["vOut"][i]["nType"] == d["vOut"][str(i)]["nType"]
-        assert t["vOut"][i]["type"] == d["vOut"][str(i)]["type"]
-        if "addressHash" in t["vOut"][i]:
-            assert t["vOut"][i]["addressHash"] == d["vOut"][str(i)]["addressHash"]
-            assert t["vOut"][i]["address"] == d["vOut"][str(i)]["address"]
-        assert t["vOut"][i]["scriptPubKey"] == d["vOut"][str(i)]["scriptPubKey"]
-        assert t["vOut"][i]["scriptPubKeyAsm"] == d["vOut"][str(i)]["scriptPubKeyAsm"]
-        assert t["vOut"][i]["scriptPubKeyOpcodes"] == d["vOut"][str(i)]["scriptPubKeyOpcodes"]
+    for d in [d_1, d_2]:
+        assert t["txId"] == d["txId"]
+        assert t["hash"] == d["hash"]
+        assert t["version"] == d["version"]
+        assert t["size"] == d["size"]
+        assert t["vSize"] == d["vSize"]
+        assert t["bSize"] == d["bSize"]
+        assert t["lockTime"] == d["lockTime"]
+        assert t["weight"] == d["weight"]
+        assert t["data"] == d["data"]
+        assert t["coinbase"] == d["coinbase"]
+        assert t["segwit"] == d["segwit"]
+        assert t["amount"] == d["amount"]
+        for i in t["vIn"]:
+            assert t["vIn"][i]["txId"] == d["vIn"][str(i)]["txId"]
+            assert t["vIn"][i]["vOut"] == d["vIn"][str(i)]["vOut"]
+            assert t["vIn"][i]["scriptSig"] == d["vIn"][str(i)]["scriptSig"]
+            assert t["vIn"][i]["sequence"] == d["vIn"][str(i)]["sequence"]
+            if "txInWitness" in t["vIn"][i]:
+                assert t["vIn"][i]["txInWitness"] == d["vIn"][str(i)]["txInWitness"]
+            if not t["coinbase"]:
+                assert t["vIn"][i]["scriptSigOpcodes"] == d["vIn"][str(i)]["scriptSigOpcodes"]
+                assert t["vIn"][i]["scriptSigAsm"] == d["vIn"][str(i)]["scriptSigAsm"]
+        for i in t["vOut"]:
+            assert t["vOut"][i]["value"] == d["vOut"][str(i)]["value"]
+            assert t["vOut"][i]["scriptPubKey"] == d["vOut"][str(i)]["scriptPubKey"]
+            assert t["vOut"][i]["nType"] == d["vOut"][str(i)]["nType"]
+            assert t["vOut"][i]["type"] == d["vOut"][str(i)]["type"]
+            if "addressHash" in t["vOut"][i]:
+                assert t["vOut"][i]["addressHash"] == d["vOut"][str(i)]["addressHash"]
+                assert t["vOut"][i]["address"] == d["vOut"][str(i)]["address"]
+            assert t["vOut"][i]["scriptPubKey"] == d["vOut"][str(i)]["scriptPubKey"]
+            assert t["vOut"][i]["scriptPubKeyAsm"] == d["vOut"][str(i)]["scriptPubKeyAsm"]
+            assert t["vOut"][i]["scriptPubKeyOpcodes"] == d["vOut"][str(i)]["scriptPubKeyOpcodes"]
+    r = requests.get(conf["base_url"] + "/rest/transaction/621860:55555")
+    assert r.status_code == 404
+    r = requests.get(conf["base_url"] + "/rest/transaction/6218605555")
+    assert r.status_code == 400
+
 
 def test_get_transaction_by_pointer_list(conf):
     if not conf["option_transaction"]:
@@ -341,48 +342,58 @@ def test_get_transaction_by_pointer_list(conf):
                       data= json.dumps(tl).encode())
     assert r.status_code == 200
     dl = r.json()["data"]
-    c = 0
+
+    tlp = ["621866:506", "621862:1495", "621860:1373"]
+
+    r = requests.post(conf["base_url"] + "/rest/transactions/by/pointer/list",
+                      data= json.dumps(tlp).encode())
+    assert r.status_code == 200
+    dl2 = r.json()["data"]
+
+    for i in dl2.keys():
+        assert dl2[i]["txId"] in dl
+
+    for tx in txl:
+        t = Transaction(tx, testnet=conf["testnet"])
+        for d in [dl[t["txId"]]]:
+            assert t["txId"] == d["txId"]
+            assert t["hash"] == d["hash"]
+            assert t["version"] == d["version"]
+            assert t["size"] == d["size"]
+            assert t["vSize"] == d["vSize"]
+            assert t["bSize"] == d["bSize"]
+            assert t["lockTime"] == d["lockTime"]
+            assert t["weight"] == d["weight"]
+            assert t["data"] == d["data"]
+            assert t["coinbase"] == d["coinbase"]
+            assert t["segwit"] == d["segwit"]
+            assert t["amount"] == d["amount"]
+            for i in t["vIn"]:
+                assert t["vIn"][i]["txId"] == d["vIn"][str(i)]["txId"]
+                assert t["vIn"][i]["vOut"] == d["vIn"][str(i)]["vOut"]
+                assert t["vIn"][i]["scriptSig"] == d["vIn"][str(i)]["scriptSig"]
+                assert t["vIn"][i]["sequence"] == d["vIn"][str(i)]["sequence"]
+                if "txInWitness" in t["vIn"][i]:
+                    assert t["vIn"][i]["txInWitness"] == d["vIn"][str(i)]["txInWitness"]
+                if not t["coinbase"]:
+                    assert t["vIn"][i]["scriptSigOpcodes"] == d["vIn"][str(i)]["scriptSigOpcodes"]
+                    assert t["vIn"][i]["scriptSigAsm"] == d["vIn"][str(i)]["scriptSigAsm"]
+            for i in t["vOut"]:
+                assert t["vOut"][i]["value"] == d["vOut"][str(i)]["value"]
+                assert t["vOut"][i]["scriptPubKey"] == d["vOut"][str(i)]["scriptPubKey"]
+                assert t["vOut"][i]["nType"] == d["vOut"][str(i)]["nType"]
+                assert t["vOut"][i]["type"] == d["vOut"][str(i)]["type"]
+                if "addressHash" in t["vOut"][i]:
+                    assert t["vOut"][i]["addressHash"] == d["vOut"][str(i)]["addressHash"]
+                    assert t["vOut"][i]["address"] == d["vOut"][str(i)]["address"]
+                assert t["vOut"][i]["scriptPubKey"] == d["vOut"][str(i)]["scriptPubKey"]
+                assert t["vOut"][i]["scriptPubKeyAsm"] == d["vOut"][str(i)]["scriptPubKeyAsm"]
 
 
-    for d in dl:
-        t = Transaction(txl[c], testnet=conf["testnet"])
-        assert t["txId"] == d["txId"]
-        assert t["hash"] == d["hash"]
-        assert t["version"] == d["version"]
-        assert t["size"] == d["size"]
-        assert t["vSize"] == d["vSize"]
-        assert t["bSize"] == d["bSize"]
-        assert t["lockTime"] == d["lockTime"]
-        assert t["weight"] == d["weight"]
-        assert t["data"] == d["data"]
-        assert t["coinbase"] == d["coinbase"]
-        assert t["segwit"] == d["segwit"]
-        assert t["amount"] == d["amount"]
-        for i in t["vIn"]:
-            assert t["vIn"][i]["txId"] == d["vIn"][str(i)]["txId"]
-            assert t["vIn"][i]["vOut"] == d["vIn"][str(i)]["vOut"]
-            assert t["vIn"][i]["scriptSig"] == d["vIn"][str(i)]["scriptSig"]
-            assert t["vIn"][i]["sequence"] == d["vIn"][str(i)]["sequence"]
-            if "txInWitness" in t["vIn"][i]:
-                assert t["vIn"][i]["txInWitness"] == d["vIn"][str(i)]["txInWitness"]
-            if not t["coinbase"]:
-                assert t["vIn"][i]["scriptSigOpcodes"] == d["vIn"][str(i)]["scriptSigOpcodes"]
-                assert t["vIn"][i]["scriptSigAsm"] == d["vIn"][str(i)]["scriptSigAsm"]
-        for i in t["vOut"]:
-            assert t["vOut"][i]["value"] == d["vOut"][str(i)]["value"]
-            assert t["vOut"][i]["scriptPubKey"] == d["vOut"][str(i)]["scriptPubKey"]
-            assert t["vOut"][i]["nType"] == d["vOut"][str(i)]["nType"]
-            assert t["vOut"][i]["type"] == d["vOut"][str(i)]["type"]
-            if "addressHash" in t["vOut"][i]:
-                assert t["vOut"][i]["addressHash"] == d["vOut"][str(i)]["addressHash"]
-                assert t["vOut"][i]["address"] == d["vOut"][str(i)]["address"]
-            assert t["vOut"][i]["scriptPubKey"] == d["vOut"][str(i)]["scriptPubKey"]
-            assert t["vOut"][i]["scriptPubKeyAsm"] == d["vOut"][str(i)]["scriptPubKeyAsm"]
-
-
-def test_test_get_transaction_hash_by_pointer(conf):
+def test_get_transaction_hash_by_pointer(conf):
     if not conf["option_transaction"]:
         return
+
     r = requests.get(conf["base_url"] +
                      "/rest/transaction/hash/by/pointer/100000:0")
     assert r.status_code == 200
@@ -393,3 +404,20 @@ def test_test_get_transaction_hash_by_pointer(conf):
     assert r.status_code == 200
     d = r.json()["data"]
     assert d == "9b1029a8fe22caf4f79bd58dc44727b1dfa4b64ba230a299ae042c1e407bee8f"
+
+
+def test_get_transaction_hash_by_pointers(conf):
+    if not conf["option_transaction"]:
+        return
+    tlp = ["621866:506", "621862:1495", "621860:1373"]
+    r = requests.post(conf["base_url"] + "/rest/transactions/hash/by/blockchain/pointer/list",
+                      data= json.dumps(tlp).encode())
+    assert r.status_code == 200
+    dl2 = r.json()["data"]
+
+    tl = ["9414ad2bb1a038076bc859ef4cb048c9e859ca155307008bcad94d9e78abba24",
+          "b6056e9210beb7a3f019e7758fa87a9d07121507305efea3b6f638dd5390de3e",
+          "f44e31829bd6424c932bee7cc0aa0e4730403b8be3e956ed7d5a67e001cfb804"]
+
+    for t in dl2.values():
+        assert t in tl

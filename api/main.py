@@ -7,6 +7,7 @@ from routes import *
 from pybtc import LRU
 
 
+
 config_file =   "../config/btcapi-server.conf"
 log_level = logging.WARNING
 logger = colorlog.getLogger('API')
@@ -49,6 +50,7 @@ app["transaction"] = True if config["OPTIONS"]["transaction"] == "on" else False
 app["merkle_proof"] = True if config["OPTIONS"]["merkle_proof"] == "on" else False
 app["address_state"] = True if config["OPTIONS"]["address_state"] == "on" else False
 app["address_timeline"] = True if config["OPTIONS"]["address_timeline"] == "on" else False
+app["blocks_data"] = True if config["OPTIONS"]["blocks_data"] == "on" else False
 app["blockchain_analytica"] = True if config["OPTIONS"]["blockchain_analytica"] == "on" else False
 app["transaction_history"] = True if config["OPTIONS"]["transaction_history"] == "on" else False
 
