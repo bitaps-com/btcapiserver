@@ -23,11 +23,13 @@ def test_get_block_transactions(conf):
     r = requests.get("https://gist.githubusercontent.com/4tochka/ec827a60214fc46eaa3aae71c6ba28bd/raw/"
                      "93e875692d2a1d21cc561824461f1cda92e25bf3/test%2520block")
     b = Block(r.text, testnet=conf["testnet"])
-    r = requests.get(conf["base_url"] + "/rest/block/transactions/520667")
+    r = requests.get(conf["base_url"] + "/rest/block/transactions/520667?mode=verbose")
     assert r.status_code == 200
     d = r.json()["data"]
 
     for t in b["tx"]:
+        if t not in d:
+            continue
         assert b["tx"][t]["txId"] == d[int(t)]["txId"]
         assert b["tx"][t]["hash"] == d[int(t)]["hash"]
         assert b["tx"][t]["version"] == d[int(t)]["version"]

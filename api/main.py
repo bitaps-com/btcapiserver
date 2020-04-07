@@ -65,7 +65,7 @@ try: app["get_block_utxo_page_limit"] = int(config["API"]["get_block_utxo_page_l
 except: app["get_block_utxo_page_limit"] = 5000
 
 try: app["get_block_tx_page_limit"] = int(config["API"]["get_block_tx_page_limit"])
-except: app["get_block_tx_page_limit"] = 5000
+except: app["get_block_tx_page_limit"] = 2 ** 19 - 1
 
 app.on_startup.append(model.init_db_pool)
 app.on_startup.append(model.load_block_map)

@@ -5,6 +5,7 @@ import traceback
 from model import *
 from pybtc import *
 from utils import *
+import datetime
 import zlib
 
 async def get_block_last(request):
@@ -48,6 +49,206 @@ async def get_block_by_pointer(request, pointer=None):
             log.error(str(err))
     finally:
         return web.json_response(response, dumps=json.dumps, status = status)
+
+async def get_last_n_blocks(request):
+    log = request.app["log"]
+    log.info("GET %s" % str(request.rel_url))
+
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+    try:
+        n = request.match_info['n']
+        n = int(n)
+        if n > 2016:
+            n = 2016
+        response = await last_n_blocks(n, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+async def get_data_last_n_blocks(request):
+    log = request.app["log"]
+    log.info("GET %s" % str(request.rel_url))
+
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+    try:
+        n = request.match_info['n']
+        n = int(n)
+        if n > 2016:
+            n = 2016
+        response = await data_last_n_blocks(n, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+
+async def get_data_daily_blocks(request):
+    r = await get_data_blocks_by_day(request, today=True)
+    return r
+
+
+async def get_daily_blocks(request):
+    r = await get_blocks_by_day(request, today=True)
+    return r
+
+async def get_last_n_hours_blocks(request):
+    # todo
+    # кеширование запросов
+    log = request.app["log"]
+    db_pool = request.app["db_pool"]
+    n = request.match_info['n']
+    log.info("get last %s blocks" % n)
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""
+               }
+    try:
+        try:
+            n = int(n)
+            assert n > 0
+        except:
+            raise APIException(DECODE_ERROR, "hours should be numeric 1...24")
+        if n > 24:
+            raise APIException(PARAMETER_ERROR, "maximum 24 hours last blocks allowed")
+        response = await blocks_last_n_hours(n, request.app)
+
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                   }
+    except Exception as err:
+        log.error(str(traceback.format_exc()))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+async def get_data_last_n_hours_blocks(request):
+    log = request.app["log"]
+    n = request.match_info['n']
+    log.info("get last %s hours blocks" % n)
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""
+               }
+    try:
+        try:
+            n = int(n)
+            assert n > 0
+        except:
+            raise APIException(DECODE_ERROR, "hours should be numeric 1...24")
+        if n > 24:
+            raise APIException(PARAMETER_ERROR, "maximum 24 hours last blocks allowed")
+        response = await blocks_data_last_n_hours(n, request.app)
+
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                   }
+    except Exception as err:
+        log.error(str(traceback.format_exc()))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+
+async def get_blocks_by_day(request, today=False):
+    log = request.app["log"]
+    log.info("get daily  blocks")
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""
+               }
+    try:
+        if today:
+            day = (int(time.time()) // 86400) * 86400
+        else:
+            try:
+                day = request.match_info['day']
+                day = datetime.datetime.strptime(day, '%Y%m%d')
+                day = int(day.timestamp())
+            except:
+                raise APIException(PARAMETER_ERROR, "date format YYYYMMDD")
+
+        response = await blocks_daily(day, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                   }
+    except Exception as err:
+        log.error(str(traceback.format_exc()))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+
+async def get_data_blocks_by_day(request, today=False):
+    log = request.app["log"]
+    log.info("get daily  blocks")
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""
+               }
+    try:
+        if today:
+            day = (int(time.time()) // 86400) * 86400
+        else:
+            try:
+                day = request.match_info['day']
+                day = datetime.datetime.strptime(day, '%Y%m%d')
+                day = int(day.timestamp())
+            except:
+                raise APIException(PARAMETER_ERROR, "date format YYYYMMDD")
+
+        response = await data_blocks_daily(day, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                   }
+    except Exception as err:
+        log.error(str(traceback.format_exc()))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
 
 
 async def get_block_data_last(request):
@@ -203,14 +404,36 @@ async def get_block_transactions(request):
     parameters = request.rel_url.query
 
     try:
+
         limit = int(parameters["limit"])
-        if  not (limit > 0 and limit <= request.app["get_block_tx_page_limit"]): raise Exception()
-    except: limit = request.app["get_block_tx_page_limit"]
+        if  not (limit >= 0):
+            raise Exception()
+    except:
+        limit = 50
+
+    try:
+        mode = parameters['mode']
+    except:
+        mode = "brief"
+
+    if mode not in ["brief", "verbose"]:
+        mode = "brief"
 
     try:
         page = int(parameters["page"])
         if page <= 0: raise Exception()
     except: page = 1
+
+
+    if limit == 0 or limit > request.app["get_block_tx_page_limit"]:
+        if limit == 0:
+            page = 1
+        limit = request.app["get_block_tx_page_limit"]
+
+
+    if limit * page > 2 ** 19 - 1:
+        limit = 50
+        page = 1
 
     try: order = "asc" if parameters["order"] == "desc" else "desc"
     except: order = "asc"
@@ -235,7 +458,7 @@ async def get_block_transactions(request):
                 option_raw_tx = True
         except:
             option_raw_tx = False
-        response = await block_transactions(pointer, option_raw_tx, limit, page, order, request.app)
+        response = await block_transactions(pointer, option_raw_tx, limit, page, order, mode, request.app)
 
         status = 200
     except APIException as err:
@@ -773,6 +996,123 @@ async def get_address_state(request):
         return web.json_response(response, dumps=json.dumps, status = status)
 
 
+async def get_address_state_extended(request):
+    log = request.app["log"]
+    address = request.match_info['address']
+    addr_type = address_type(address, num=True)
+    log.info("get address extended state  %s" % str(request.rel_url))
+
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+    try:
+        splitted =  request.match_info['type_splitted'] == True
+        if not splitted:
+            splitted = request.match_info['type_splitted'] == True
+    except:
+        splitted = False
+
+    try:
+        if addr_type in (0, 1, 5, 6):
+            address_net = address_net_type(address)
+            if address_net == "testnet" and not request.app["testnet"]:
+                raise APIException(PARAMETER_ERROR, "testnet address is invalid for mainnet")
+            if address_net == "mainnet" and request.app["testnet"]:
+                raise APIException(PARAMETER_ERROR, "mainnet address is invalid for testnet")
+            try:
+                address = b"".join((bytes([addr_type]), address_to_hash(address, hex=False)))
+            except:
+                raise APIException(PARAMETER_ERROR, "invalid address")
+        else:
+            try:
+                address = bytes_needed(address)
+            except:
+                raise APIException(PARAMETER_ERROR, "invalid address")
+        if address[0] == 0:
+            p2pkh = await address_state_extended(address, request.app)
+            address =  b"".join((b"\x02", address[1:]))
+            pubkey = await address_state_extended(address, request.app)
+            if not splitted:
+
+                if p2pkh["data"]["firstReceivedTxPointer"] is None and pubkey["data"]["firstReceivedTxPointer"] is None:
+                    frp = None
+                elif p2pkh["data"]["firstReceivedTxPointer"] is not None and pubkey["data"]["firstReceivedTxPointer"] is not None:
+                    if p2pkh["data"]["firstReceivedTxPointer"] > pubkey["data"]["firstReceivedTxPointer"]:
+                        frp = pubkey["data"]["firstReceivedTxPointer"]
+                    else:
+                        frp = p2pkh["data"]["firstReceivedTxPointer"]
+                elif  p2pkh["data"]["firstReceivedTxPointer"] is not None:
+                    frp = p2pkh["data"]["firstReceivedTxPointer"]
+                else:
+                    frp = pubkey["data"]["firstReceivedTxPointer"]
+
+                if p2pkh["data"]["firstSentTxPointer"] is None and pubkey["data"]["firstSentTxPointer"] is None:
+                    fsp = None
+                elif p2pkh["data"]["firstSentTxPointer"] is not None and pubkey["data"]["firstSentTxPointer"] is not None:
+                    if p2pkh["data"]["firstSentTxPointer"] > pubkey["data"]["firstSentTxPointer"]:
+                        fsp = pubkey["data"]["firstSentTxPointer"]
+                    else:
+                        fsp = p2pkh["data"]["firstSentTxPointer"]
+                elif  p2pkh["data"]["firstSentTxPointer"] is not None:
+                    fsp = p2pkh["data"]["firstSentTxPointer"]
+                else:
+                    fsp = pubkey["data"]["firstSentTxPointer"]
+
+
+                if p2pkh["data"]["lastTxPointer"] is None and pubkey["data"]["lastTxPointer"] is None:
+                    ltp = None
+                elif p2pkh["data"]["lastTxPointer"] is not None and pubkey["data"]["lastTxPointer"] is not None:
+                    if p2pkh["data"]["lastTxPointer"] > pubkey["data"]["lastTxPointer"]:
+                        ltp = p2pkh["data"]["lastTxPointer"]
+                    else:
+                        ltp = pubkey["data"]["lastTxPointer"]
+                else:
+                    if p2pkh["data"]["lastTxPointer"] is not None:
+                        ltp = p2pkh["data"]["lastTxPointer"]
+                    else:
+                        ltp = pubkey["data"]["lastTxPointer"]
+
+
+                response = {"data": {"balance": p2pkh["data"]["balance"] + pubkey["data"]["balance"],
+                                   "receivedAmount": p2pkh["data"]["receivedAmount"] + pubkey["data"]["receivedAmount"],
+                                   "receivedTxCount": p2pkh["data"]["receivedTxCount"] + pubkey["data"]["receivedTxCount"],
+                                   "sentAmount": p2pkh["data"]["sentAmount"] + pubkey["data"]["sentAmount"],
+                                   "sentTxCount": p2pkh["data"]["sentTxCount"] + pubkey["data"]["sentTxCount"],
+                                   "firstReceivedTxPointer": frp,
+                                   "firstSentTxPointer": fsp,
+                                   "lastTxPointer": ltp,
+                                   "outputsReceivedCount": p2pkh["data"]["outputsReceivedCount"] + pubkey["data"]["outputsReceivedCount"],
+                                   "outputsSpentCount": p2pkh["data"]["outputsSpentCount"] + pubkey["data"]["outputsSpentCount"],
+                                   "type": "P2PKH+PUBKEY"},
+                        "time": p2pkh["time"] + pubkey["time"]}
+            else:
+                response = {"data": {"P2PKH": p2pkh["data"],
+                                     "PUBKEY": pubkey["data"]},
+                            "time": p2pkh["time"] + pubkey["time"]}
+
+
+
+
+        else:
+            response = await address_state_extended(address, request.app)
+            if splitted:
+                response["data"] = {response["data"]["type"]: response["data"]}
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]: log.error(str(traceback.format_exc()))
+        else: log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+
+
 async def get_address_state_by_list(request):
     log = request.app["log"]
     log.info("POST %s" % str(request.rel_url))
@@ -833,13 +1173,55 @@ async def get_address_confirmed_utxo(request):
     log = request.app["log"]
     address = request.match_info['address']
     addr_type = address_type(address, num=True)
-    log.info("get address %s" % address)
+    log.info("get address confirmed utxo %s" % address)
 
 
     status = 500
     response = {"error_code": INTERNAL_SERVER_ERROR,
                 "message": "internal server error",
                 "details": ""}
+
+    parameters = request.rel_url.query
+
+    try:
+        type = None
+        if parameters["type"] == "P2PKH":
+            type = 0
+        if parameters["type"] == "PUBKEY":
+            type = 2
+    except:
+        pass
+
+    try:
+        from_block = int(parameters["from_block"])
+    except:
+        from_block = 0
+
+    try:
+        order = "asc" if parameters["order"] == "desc" else "desc"
+    except:
+        order = "asc"
+
+    try:
+        order_by = "pointer"
+        if parameters["order_by_amount"] in ("True", "1"):
+            order_by = "amount"
+    except:
+        pass
+
+    try:
+        limit = int(parameters["limit"])
+        if  not (limit > 0 and limit <= request.app["get_block_utxo_page_limit"]):
+            raise Exception()
+    except:
+        limit = request.app["get_block_utxo_page_limit"]
+
+    try:
+        page = int(parameters["page"])
+        if page <= 0: raise Exception()
+    except:
+        page = 1
+
 
     try:
         if addr_type in (0, 1, 5, 6):
@@ -853,12 +1235,9 @@ async def get_address_confirmed_utxo(request):
             except:
                 raise APIException(PARAMETER_ERROR, "invalid address")
         else:
-            try:
-                address = bytes_needed(address)
-            except:
-                raise APIException(PARAMETER_ERROR, "invalid address")
+            raise APIException(PARAMETER_ERROR, "invalid address")
 
-        response = await address_confirmed_utxo(address, request.app)
+        response = await address_confirmed_utxo(address, type, from_block, order, order_by, limit, page, request.app)
         status = 200
     except APIException as err:
         status = err.status

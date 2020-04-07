@@ -37,6 +37,67 @@ def test_get_block_pointer(conf):
     r = requests.get(conf["base_url"] + "/rest/block/ffff00000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f")
     assert r.status_code == 404
 
+def test_get_last_n_blocks(conf):
+    r = requests.get(conf["base_url"] + "/rest/blocks/last/2016")
+    assert r.status_code == 200
+    rd = r.json()["data"]
+    for d in rd:
+        assert 'height' in d
+        assert 'hash' in d
+        assert 'header' in d
+        assert 'adjustedTimestamp' in d
+        assert d['hash'] == rh2s(double_sha256(base64.b64decode(d["header"])[:80], hex=False))
+    r = requests.get("https://api.bitaps.com/btc/v1/blockchain/blocks/last/2016")
+    rd_1 = r.json()["data"]
+    for i in range(2016):
+        assert rd_1[i]["height"] == rd[i]["height"]
+
+
+def test_get_day_blocks(conf):
+    r = requests.get(conf["base_url"] + "/rest/blocks/date/20190101")
+    assert r.status_code == 200
+    rd = r.json()["data"]
+    for d in rd:
+        assert 'height' in d
+        assert 'hash' in d
+        assert 'header' in d
+        assert 'adjustedTimestamp' in d
+        assert d['hash'] == rh2s(double_sha256(base64.b64decode(d["header"])[:80], hex=False))
+    r = requests.get("https://api.bitaps.com/btc/v1/blockchain/blocks/date/20190101")
+    rd_1 = r.json()["data"]
+    for i in range(len(rd_1)):
+        assert rd_1[i]["height"] == rd[i]["height"]
+
+def test_get_today_blocks(conf):
+    r = requests.get(conf["base_url"] + "/rest/blocks/today")
+    assert r.status_code == 200
+    rd = r.json()["data"]
+    for d in rd:
+        assert 'height' in d
+        assert 'hash' in d
+        assert 'header' in d
+        assert 'adjustedTimestamp' in d
+        assert d['hash'] == rh2s(double_sha256(base64.b64decode(d["header"])[:80], hex=False))
+    r = requests.get("https://api.bitaps.com/btc/v1/blockchain/blocks/today")
+    rd_1 = r.json()["data"]
+    for i in range(len(rd_1)):
+        assert rd_1[i]["height"] == rd[i]["height"]
+
+def test_get_last_n_hours_blocks(conf):
+    r = requests.get(conf["base_url"] + "/rest/blocks/last/1/hours")
+    assert r.status_code == 200
+    rd = r.json()["data"]
+    for d in rd:
+        assert 'height' in d
+        assert 'hash' in d
+        assert 'header' in d
+        assert 'adjustedTimestamp' in d
+        assert d['hash'] == rh2s(double_sha256(base64.b64decode(d["header"])[:80], hex=False))
+    r = requests.get("https://api.bitaps.com/btc/v1/blockchain/blocks/last/1/hours")
+    rd_1 = r.json()["data"]
+    for i in range(len(rd_1)):
+        assert rd_1[i]["height"] == rd[i]["height"]
+
 def test_get_block_headers(conf):
     r = requests.get(conf["base_url"] + "/rest/block/headers/10")
     assert r.status_code == 200

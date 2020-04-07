@@ -19,9 +19,9 @@ import pickle
 
 from pybtc import Connector, encode_gcs, int_to_var_int, ripemd160, double_sha256, sha256
 from pybtc import int_to_c_int, MRU, bytes_to_int
-from pybtc import map_into_range, siphash
+from pybtc import map_into_range, siphash, target_to_difficulty, bits_to_target, int_to_bytes
 from pybtc import s2rh, rh2s, merkle_tree, merkle_proof, parse_script
-
+from struct  import  unpack
 
 import db_model
 from modules.filter_compressor import FilterCompressor
@@ -683,12 +683,42 @@ class App:
             # blocks table
 
             if self.block_best_timestamp < block["time"]:  self.block_best_timestamp = block["time"]
-            await conn.copy_records_to_table('blocks',
-                                             columns=["height", "hash", "header", "timestamp_received",
-                                                      "adjusted_timestamp"],
-                                             records=[(block["height"], s2rh(block["hash"]),
-                                                       block["header"] + int_to_var_int(len(block["tx"])),
-                                                       int(time.time()), self.block_best_timestamp)])
+
+            if self.blocks_data:
+                miner = block["miner"]
+                target = bits_to_target(unpack("<L", s2rh(block["bits"]))[0])
+                data = json.dumps({"version": block["version"],
+                                   "previousBlockHash": block["previousblockhash"],
+                                   "merkleRoot": block["merkleroot"],
+                                   "bits": block["bits"],
+                                   "nonce": block["nonce"],
+                                   "weight": block["weight"],
+                                   "size": block["size"],
+                                   "strippedSize": block["strippedsize"],
+                                   "amount": block["amount"],
+                                   "target": rh2s(target.to_bytes(32, byteorder="little")),
+                                   "targetDifficulty": target_to_difficulty(target)
+                                   })
+
+                await conn.copy_records_to_table('blocks',
+                                                 columns=["height", "hash", "header", "timestamp_received",
+                                                          "adjusted_timestamp", "miner", "data",],
+                                                 records=[(block["height"],
+                                                           s2rh(block["hash"]),
+                                                           block["header"] + int_to_var_int(len(block["tx"])),
+                                                           int(time.time()),
+                                                           self.block_best_timestamp,
+                                                           miner,
+                                                           data)])
+            else:
+                await conn.copy_records_to_table('blocks',
+                                                 columns=["height", "hash", "header", "timestamp_received",
+                                                          "adjusted_timestamp"],
+                                                 records=[(block["height"],
+                                                           s2rh(block["hash"]),
+                                                           block["header"] + int_to_var_int(len(block["tx"])),
+                                                           int(time.time()),
+                                                           self.block_best_timestamp)])
 
         except:
             print(traceback.format_exc())

@@ -12,12 +12,23 @@ def setup_routes(app):
     # Base methods
     app.router.add_route('GET', '/rest/block/last', get_block_last)
     app.router.add_route('GET', '/rest/block/{block_pointer}', get_block_by_pointer)
+
+    app.router.add_route('GET', '/rest/blocks/last/{n}', get_last_n_blocks)
+    app.router.add_route('GET', '/rest/blocks/today', get_daily_blocks)
+    app.router.add_route('GET', '/rest/blocks/date/{day}', get_blocks_by_day)
+    app.router.add_route('GET', '/rest/blocks/last/{n}/hours', get_last_n_hours_blocks)
+
+
     app.router.add_route('GET', '/rest/block/headers/{block_pointer}/{count}', get_block_headers)
     app.router.add_route('GET', '/rest/block/headers/{block_pointer}', get_block_headers)
 
     app.router.add_route('GET', '/rest/block/utxo/{block_pointer}', get_block_utxo) # test after sync completed
 
-    app.router.add_route('GET', '/rest/address/state/{address}', get_address_state)
+    if app["transaction_history"]:
+        # app.router.add_route('GET', '/rest/address/state/{address}', get_address_state_extended)
+        app.router.add_route('GET', '/rest/address/state/{address}', get_address_state)
+    else:
+        app.router.add_route('GET', '/rest/address/state/{address}', get_address_state)
     app.router.add_route('POST', '/rest/addresses/state/by/address/list', get_address_state_by_list)
 
     app.router.add_route('GET', '/rest/address/utxo/{address}', get_address_confirmed_utxo)
@@ -27,6 +38,10 @@ def setup_routes(app):
         app.router.add_route('GET', '/rest/block/data/last', get_block_data_last)
         app.router.add_route('GET', '/rest/block/data/{block_pointer}', get_block_data_by_pointer)
 
+        app.router.add_route('GET', '/rest/blocks/data/last/{n}', get_data_last_n_blocks)
+        app.router.add_route('GET', '/rest/blocks/data/today', get_data_daily_blocks)
+        app.router.add_route('GET', '/rest/blocks/data/date/{day}', get_data_blocks_by_day)
+        app.router.add_route('GET', '/rest/blocks/data/last/{n}/hours', get_data_last_n_hours_blocks)
 
     if app["transaction"]:
         app.router.add_route('GET', '/rest/block/transactions/{block_pointer}', get_block_transactions)
@@ -47,6 +62,7 @@ def setup_routes(app):
 
         app.router.add_route('GET', '/rest/transaction/calculate/merkle_proof/{tx_pointer}',
                              calculate_transaction_merkle_proof)
+
 
     if app["block_filters"]:
         # block filters

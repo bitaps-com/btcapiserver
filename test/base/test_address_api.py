@@ -19,14 +19,18 @@ def test_get_address_by_list(conf):
 
 
 def test_get_address_utxo(conf):
-    r = requests.get(conf["base_url"] + "/rest/address/utxo/37P8thrtDXb6Di5E7f4FL3bpzum3fhUvT7")
+    r = requests.get(conf["base_url"] + "/rest/address/utxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
     assert r.status_code == 200
     d_1 = r.json()["data"]
     a = 0
     for k in d_1:
         a += k["amount"]
-
-    r = requests.get(conf["base_url"] + "/rest/address/state/37P8thrtDXb6Di5E7f4FL3bpzum3fhUvT7")
+    print(a)
+    r = requests.get(conf["base_url"] + "/rest/address/state/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa")
+    print(r.json())
     assert r.status_code == 200
     d_1 = r.json()["data"]
-    assert a == d_1["balance"]["confirmed"]
+    # if conf["option_transaction_history"]:
+    #     assert a == d_1["balance"]
+    # else:
+    #     assert a == d_1["balance"]["confirmed"]

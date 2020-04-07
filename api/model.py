@@ -2,7 +2,7 @@ import asyncio
 import asyncpg
 from pybtc import *
 from utils import *
-from pybtc import rh2s
+from pybtc import rh2s, SCRIPT_N_TYPES
 import time
 import base64
 import aiojsonrpc
@@ -111,7 +111,7 @@ async def block_data_by_pointer(pointer, app):
         block["adjustedTimestamp"] = row["adjusted_timestamp"]
         block["bitsHex"] = block["bits"]
         block["bits"] = bytes_to_int(bytes_from_hex(block["bits"]))
-        block["nonceHex"] = int_to_bytes(block["nonce"]).hex()
+        block["nonceHex"] = block["nonce"].to_bytes(4, byteorder="big").hex()
         block["versionHex"] = int_to_bytes(block["version"]).hex()
         block["difficulty"] = block["targetDifficulty"]
         q = int.from_bytes(s2rh(block["hash"]), byteorder="little")
@@ -141,12 +141,373 @@ async def block_data_by_pointer(pointer, app):
             block["blockFeeReward"] = 0
         block["confirmations"] = app["last_block"] -  block["height"] + 1
         block["transactionsCount"] = var_int_to_int(row["header"][80:])
-        block["coinbase"] = tx["vIn"][0]["sigScript"].hex()
+        block["coinbase"] = tx["vIn"][0]["scriptSig"].hex()
 
 
 
 
     resp = {"data": block,
+            "time": round(time.time() - q, 4)}
+    return resp
+
+async def  last_n_blocks(n, app):
+    pool = app["db_pool"]
+    q = time.time()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT height,"
+                                      "       hash,"
+                                      "       header,"
+                                      "       adjusted_timestamp "
+                                      "FROM blocks  ORDER BY height desc LIMIT $1;", n)
+
+    if rows is None:
+        raise APIException(NOT_FOUND, "blocks not found", status=404)
+    r = []
+    for row in rows:
+        block = dict()
+        block["height"] = row["height"]
+        block["hash"] = rh2s(row["hash"])
+        block["header"] = base64.b64encode(row["header"]).decode()
+        block["adjustedTimestamp"] = row["adjusted_timestamp"]
+        r.append(block)
+
+    resp = {"data": r,
+            "time": round(time.time() - q, 4)}
+    return resp
+
+
+async def  data_last_n_blocks(n, app):
+    pool = app["db_pool"]
+    q = time.time()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT height,"
+                                  "       hash,"
+                                  "       miner,"
+                                  "       timestamp_received,"
+                                  "       data,"
+                                  "       header,"
+                                  "       adjusted_timestamp "
+                              "FROM blocks  ORDER BY height desc LIMIT $1;", n)
+
+        nx_map = dict()
+        cb_pointers = []
+        for row in rows:
+            cb_pointers.append(row["height"] << 39)
+            nx_map[row["height"] - 1] = rh2s(row["hash"])
+
+
+        cb_pointers = [row["height"] << 39 for row in rows]
+
+        cb_rows = await conn.fetch("SELECT pointer, raw_transaction  "
+                                "FROM transaction  WHERE pointer = ANY($1);",  cb_pointers)
+        cb_map = dict()
+        for cb in cb_rows:
+            cb_map[cb["pointer"] >> 39] = Transaction(cb["raw_transaction"], format="raw")
+
+
+
+    if rows is None:
+        raise APIException(NOT_FOUND, "blocks not found", status=404)
+    r = []
+
+    for row in rows:
+        block = dict()
+        block["height"] = row["height"]
+        if block["height"] > app["last_block"]:
+            await block_map_update(app)
+            if block["height"] > app["last_block"]:
+                raise Exception("internal error")
+        block["hash"] = rh2s(row["hash"])
+        block["header"] = base64.b64encode(row["header"]).decode()
+        d = json.loads(row["data"])
+        for k in  d:
+            block[k] = d[k]
+        if row["miner"]:
+            block["miner"] = json.loads(row["miner"])
+        else:
+            block["miner"] = None
+        block["medianBlockTime"] = app["block_map_time"][block["height"]][2]
+        block["blockTime"] = app["block_map_time"][block["height"]][1]
+        block["receivedTimestamp"] = row["timestamp_received"]
+        block["adjustedTimestamp"] = row["adjusted_timestamp"]
+        block["bitsHex"] = block["bits"]
+        block["bits"] = bytes_to_int(bytes_from_hex(block["bits"]))
+        block["nonceHex"] = block["nonce"].to_bytes(4, byteorder="big").hex()
+        block["versionHex"] = int_to_bytes(block["version"]).hex()
+        block["difficulty"] = round(block["targetDifficulty"], 2)
+        q = int.from_bytes(s2rh(block["hash"]), byteorder="little")
+        block["blockDifficulty"] = target_to_difficulty(q)
+        del block["targetDifficulty"]
+        try:
+            block["nextBlockHash"] = nx_map[block["height"]]
+        except:
+            block["nextBlockHash"] = None
+
+        # get coinbase transaction
+
+        tx = cb_map[block["height"]]
+
+        block["estimatedBlockReward"] = 50 * 100000000 >> block["height"] // 210000
+        block["blockReward"] = tx["amount"]
+        if tx["amount"] > block["estimatedBlockReward"]:
+            block["blockReward"] = block["estimatedBlockReward"]
+            block["blockFeeReward"] = tx["amount"] - block["estimatedBlockReward"]
+        else:
+            block["blockReward"] = tx["amount"]
+            block["blockFeeReward"] = 0
+        block["confirmations"] = app["last_block"] -  block["height"] + 1
+        block["transactionsCount"] = var_int_to_int(row["header"][80:])
+        block["coinbase"] = tx["vIn"][0]["scriptSig"].hex()
+        r.append(block)
+
+    resp = {"data": r,
+            "time": round(time.time() - q, 4)}
+    return resp
+
+async def  blocks_data_last_n_hours(n, app):
+    pool = app["db_pool"]
+    q = time.time()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT height,"
+                                  "       hash,"
+                                  "       miner,"
+                                  "       timestamp_received,"
+                                  "       data,"
+                                  "       header,"
+                                  "       adjusted_timestamp "
+                              "FROM blocks  "
+                                "WHERE adjusted_timestamp >= $1 "
+                                "ORDER BY height desc;", int(time.time()) - n * 60 * 60 )
+
+        nx_map = dict()
+        cb_pointers = []
+        for row in rows:
+            cb_pointers.append(row["height"] << 39)
+            nx_map[row["height"] - 1] = rh2s(row["hash"])
+
+
+        cb_pointers = [row["height"] << 39 for row in rows]
+
+        cb_rows = await conn.fetch("SELECT pointer, raw_transaction  "
+                                "FROM transaction  WHERE pointer = ANY($1);",  cb_pointers)
+        cb_map = dict()
+        for cb in cb_rows:
+            cb_map[cb["pointer"] >> 39] = Transaction(cb["raw_transaction"], format="raw")
+
+
+
+    if rows is None:
+        raise APIException(NOT_FOUND, "blocks not found", status=404)
+    r = []
+
+    for row in rows:
+        block = dict()
+        block["height"] = row["height"]
+        if block["height"] > app["last_block"]:
+            await block_map_update(app)
+            if block["height"] > app["last_block"]:
+                raise Exception("internal error")
+        block["hash"] = rh2s(row["hash"])
+        block["header"] = base64.b64encode(row["header"]).decode()
+        d = json.loads(row["data"])
+        for k in  d:
+            block[k] = d[k]
+        if row["miner"]:
+            block["miner"] = json.loads(row["miner"])
+        else:
+            block["miner"] = None
+        block["medianBlockTime"] = app["block_map_time"][block["height"]][2]
+        block["blockTime"] = app["block_map_time"][block["height"]][1]
+        block["receivedTimestamp"] = row["timestamp_received"]
+        block["adjustedTimestamp"] = row["adjusted_timestamp"]
+        block["bitsHex"] = block["bits"]
+        block["bits"] = bytes_to_int(bytes_from_hex(block["bits"]))
+        block["nonceHex"] = block["nonce"].to_bytes(4, byteorder="big").hex()
+        block["versionHex"] = int_to_bytes(block["version"]).hex()
+        block["difficulty"] = round(block["targetDifficulty"], 2)
+        q = int.from_bytes(s2rh(block["hash"]), byteorder="little")
+        block["blockDifficulty"] = target_to_difficulty(q)
+        del block["targetDifficulty"]
+        try:
+            block["nextBlockHash"] = nx_map[block["height"]]
+        except:
+            block["nextBlockHash"] = None
+
+        # get coinbase transaction
+
+        tx = cb_map[block["height"]]
+
+        block["estimatedBlockReward"] = 50 * 100000000 >> block["height"] // 210000
+        block["blockReward"] = tx["amount"]
+        if tx["amount"] > block["estimatedBlockReward"]:
+            block["blockReward"] = block["estimatedBlockReward"]
+            block["blockFeeReward"] = tx["amount"] - block["estimatedBlockReward"]
+        else:
+            block["blockReward"] = tx["amount"]
+            block["blockFeeReward"] = 0
+        block["confirmations"] = app["last_block"] -  block["height"] + 1
+        block["transactionsCount"] = var_int_to_int(row["header"][80:])
+        block["coinbase"] = tx["vIn"][0]["scriptSig"].hex()
+        r.append(block)
+
+    resp = {"data": r,
+            "time": round(time.time() - q, 4)}
+    return resp
+
+
+async def  data_blocks_daily(day, app):
+    pool = app["db_pool"]
+    q = time.time()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT height,"
+                                          "       hash,"
+                                          "       miner,"
+                                          "       timestamp_received,"
+                                          "       data,"
+                                          "       header,"
+                                          "       adjusted_timestamp "
+                                      "FROM blocks  "
+                                "WHERE adjusted_timestamp >= $1 and "
+                                "      adjusted_timestamp < $2  "
+                                "ORDER BY height desc;", day, day + 86400)
+        nx_map = dict()
+        cb_pointers = []
+        for row in rows:
+            cb_pointers.append(row["height"] << 39)
+            nx_map[row["height"] - 1] = rh2s(row["hash"])
+        h = (cb_pointers[0] >> 39) + 1
+
+        if cb_pointers:
+            next_block = await conn.fetchval("SELECT hash "
+                                          "FROM blocks  "
+                                    "WHERE height = $1 LIMIT 1;", h)
+            if next_block is not None:
+                next_block = rh2s(next_block)
+            nx_map[h - 1] = next_block
+        else:
+            nx_map[h - 1] = None
+
+
+        cb_pointers = [row["height"] << 39 for row in rows]
+
+        cb_rows = await conn.fetch("SELECT pointer, raw_transaction  "
+                                "FROM transaction  WHERE pointer = ANY($1);",  cb_pointers)
+        cb_map = dict()
+        for cb in cb_rows:
+            cb_map[cb["pointer"] >> 39] = Transaction(cb["raw_transaction"], format="raw")
+
+
+
+    if rows is None:
+        raise APIException(NOT_FOUND, "blocks not found", status=404)
+    r = []
+    for row in rows:
+        block = dict()
+        block["height"] = row["height"]
+        if block["height"] > app["last_block"]:
+            await block_map_update(app)
+            if block["height"] > app["last_block"]:
+                raise Exception("internal error")
+        block["hash"] = rh2s(row["hash"])
+        block["header"] = base64.b64encode(row["header"]).decode()
+        d = json.loads(row["data"])
+        for k in  d:
+            block[k] = d[k]
+        if row["miner"]:
+            block["miner"] = json.loads(row["miner"])
+        else:
+            block["miner"] = None
+        block["medianBlockTime"] = app["block_map_time"][block["height"]][2]
+        block["blockTime"] = app["block_map_time"][block["height"]][1]
+        block["receivedTimestamp"] = row["timestamp_received"]
+        block["adjustedTimestamp"] = row["adjusted_timestamp"]
+        block["bitsHex"] = block["bits"]
+        block["bits"] = bytes_to_int(bytes_from_hex(block["bits"]))
+        block["nonceHex"] = block["nonce"].to_bytes(4, byteorder="big").hex()
+        block["versionHex"] = int_to_bytes(block["version"]).hex()
+        block["difficulty"] = round(block["targetDifficulty"], 2)
+        q = int.from_bytes(s2rh(block["hash"]), byteorder="little")
+        block["blockDifficulty"] = target_to_difficulty(q)
+        del block["targetDifficulty"]
+        try:
+            block["nextBlockHash"] = nx_map[block["height"]]
+        except:
+            block["nextBlockHash"] = None
+
+        # get coinbase transaction
+
+        tx = cb_map[block["height"]]
+
+        block["estimatedBlockReward"] = 50 * 100000000 >> block["height"] // 210000
+        block["blockReward"] = tx["amount"]
+        if tx["amount"] > block["estimatedBlockReward"]:
+            block["blockReward"] = block["estimatedBlockReward"]
+            block["blockFeeReward"] = tx["amount"] - block["estimatedBlockReward"]
+        else:
+            block["blockReward"] = tx["amount"]
+            block["blockFeeReward"] = 0
+        block["confirmations"] = app["last_block"] -  block["height"] + 1
+        block["transactionsCount"] = var_int_to_int(row["header"][80:])
+        block["coinbase"] = tx["vIn"][0]["scriptSig"].hex()
+        r.append(block)
+
+    resp = {"data": r,
+            "time": round(time.time() - q, 4)}
+    return resp
+
+
+
+async def blocks_daily(day, app):
+    pool = app["db_pool"]
+    q = time.time()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT height,"
+                                      "       hash,"
+                                      "       header,"
+                                      "       adjusted_timestamp "
+                                      "FROM blocks  "
+                                "WHERE adjusted_timestamp >= $1 and "
+                                "      adjusted_timestamp < $2  "
+                                "ORDER BY height desc;", day, day + 86400)
+
+    if rows is None:
+        raise APIException(NOT_FOUND, "blocks not found", status=404)
+    r = []
+    for row in rows:
+        block = dict()
+        block["height"] = row["height"]
+        block["hash"] = rh2s(row["hash"])
+        block["header"] = base64.b64encode(row["header"]).decode()
+        block["adjustedTimestamp"] = row["adjusted_timestamp"]
+        r.append(block)
+
+    resp = {"data": r,
+            "time": round(time.time() - q, 4)}
+    return resp
+
+async def blocks_last_n_hours(n, app):
+    pool = app["db_pool"]
+    q = time.time()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT height,"
+                                      "       hash,"
+                                      "       header,"
+                                      "       adjusted_timestamp "
+                                      "FROM blocks  "
+                                "WHERE adjusted_timestamp >= $1 "
+                                "ORDER BY height desc;", int(time.time()) - n * 60 * 60 )
+    if rows is None:
+        raise APIException(NOT_FOUND, "blocks not found", status=404)
+    r = []
+    for row in rows:
+        block = dict()
+        block["height"] = row["height"]
+        block["hash"] = rh2s(row["hash"])
+        block["header"] = base64.b64encode(row["header"]).decode()
+        block["adjustedTimestamp"] = row["adjusted_timestamp"]
+        r.append(block)
+
+    resp = {"data": r,
             "time": round(time.time() - q, 4)}
     return resp
 
@@ -241,7 +602,7 @@ async def block_transaction_id_list(pointer, limit, page, order, app):
             "time": round(time.time() - q, 4)}
     return resp
 
-async def block_transactions(pointer, option_raw_tx, limit, page, order, app):
+async def block_transactions(pointer, option_raw_tx, limit, page, order, mode, app):
     pool = app["db_pool"]
     q = time.time()
 
@@ -262,7 +623,8 @@ async def block_transactions(pointer, option_raw_tx, limit, page, order, app):
         if block_row is None:
             raise APIException(NOT_FOUND, "block not found", status=404)
 
-        if app["block_transactions"].has_key(block_row["hash"]):
+
+        if 1==9 and app["block_transactions"].has_key(block_row["hash"]):
             transactions = app["block_transactions"][block_row["hash"]]
         else:
             if app["merkle_proof"]:
@@ -287,21 +649,27 @@ async def block_transactions(pointer, option_raw_tx, limit, page, order, app):
                 tx["confirmations"] = app["last_block"] - block_height + 1
                 if app["merkle_proof"]:
                     tx["merkleProof"] = base64.b64encode(row["merkle_proof"]).decode()
+
                 del tx["blockHash"]
                 del tx["blockTime"]
                 del tx["format"]
                 del tx["testnet"]
                 del tx["time"]
                 del tx["fee"]
-                del tx["rawTx"]
+                if not option_raw_tx:
+                    del tx["rawTx"]
                 if app["transaction_history"]:
                     tx["inputsAmount"] = 0
+                if mode == "brief":
+                    tx["outputAddresses"] = 0
+                    tx["inputAddresses"] = 0
+                    for z in tx["vOut"]:
+                        if "address" in tx["vOut"][z]:
+                            tx["outputAddresses"] += 1
                 transactions.append(tx)
             app["block_transactions"][block_row["hash"]] = transactions
-
         if app["transaction_history"]:
             # get information about spent input coins
-
             rows = await conn.fetch("SELECT stxo.pointer,"
                                     "       stxo.s_pointer,"
                                     "       transaction_map.address, "
@@ -309,87 +677,100 @@ async def block_transactions(pointer, option_raw_tx, limit, page, order, app):
                                     "FROM stxo "
                                     "JOIN transaction_map "
                                     "ON transaction_map.pointer = stxo.pointer "
-
-                                    "WHERE stxo.s_pointer >= $1 and "
-                                    "stxo.s_pointer < $2 ;", block_height << 39, (block_height + 1) << 39)
+                                    "WHERE stxo.s_pointer >= $1 and  stxo.s_pointer < $2 order by stxo.s_pointer asc;",
+                                    (block_height << 39) + ((limit * (page - 1)) << 20) ,
+                                    ((block_height ) << 39) + ((limit * (page )) << 20))
 
             for r in rows:
                 s = r["s_pointer"]
                 i = (s - ((s >> 19) << 19))
-                m = (s - ((s >> 39) << 39)) >> 20
-
-                transactions[m]["vIn"][i]["type"] = SCRIPT_N_TYPES[r["address"][0]]
-                transactions[m]["vIn"][i]["amount"] = r["amount"]
+                m = ((s - ((s >> 39) << 39)) >> 20) - limit * (page -1)
                 transactions[m]["inputsAmount"] += r["amount"]
-                transactions[m]["vIn"][i]["blockHeight"] = r["pointer"] >> 39
-                transactions[m]["vIn"][i]["confirmations"] = app["last_block"] - (r["pointer"] >> 39) + 1
-                transactions[m]["vIn"][i]["type"] = SCRIPT_N_TYPES[r["address"][0]]
 
-                if r["address"][0] in (0, 1, 5, 6):
-                    script_hash = True if r["address"][0] in (1, 6) else False
-                    witness_version = None if r["address"][0] < 5 else 0
-                    transactions[m]["vIn"][i]["address"] = hash_to_address(r["address"][1:],
-                                                                           testnet=app["testnet"],
-                                                                           script_hash=script_hash,
-                                                                           witness_version=witness_version)
-                    transactions[m]["vIn"][i]["scriptPubKey"] = address_to_script(
-                        transactions[m]["vIn"][i]["address"],
-                        hex=1)
-                elif r["address"][0] == 2:
-                    transactions[m]["vIn"][i]["address"] = script_to_address(r["address"][1:],
-                                                                             testnet=app["testnet"])
-                    transactions[m]["vIn"][i]["scriptPubKey"] = r["address"][1:].hex()
+                if mode == "verbose":
+
+                    transactions[m]["vIn"][i]["type"] = SCRIPT_N_TYPES[r["address"][0]]
+                    transactions[m]["vIn"][i]["amount"] = r["amount"]
+                    transactions[m]["vIn"][i]["blockHeight"] = r["pointer"] >> 39
+                    transactions[m]["vIn"][i]["confirmations"] = app["last_block"] - (r["pointer"] >> 39) + 1
+
+
+                    if r["address"][0] in (0, 1, 5, 6):
+                        script_hash = True if r["address"][0] in (1, 6) else False
+                        witness_version = None if r["address"][0] < 5 else 0
+                        transactions[m]["vIn"][i]["address"] = hash_to_address(r["address"][1:],
+                                                                               testnet=app["testnet"],
+                                                                               script_hash=script_hash,
+                                                                               witness_version=witness_version)
+                        transactions[m]["vIn"][i]["scriptPubKey"] = address_to_script(
+                            transactions[m]["vIn"][i]["address"],
+                            hex=1)
+                    elif r["address"][0] == 2:
+                        transactions[m]["vIn"][i]["address"] = script_to_address(r["address"][1:],
+                                                                                 testnet=app["testnet"])
+                        transactions[m]["vIn"][i]["scriptPubKey"] = r["address"][1:].hex()
+                    else:
+                        transactions[m]["vIn"][i]["scriptPubKey"] = r["address"][1:].hex()
+                    transactions[m]["vIn"][i]["scriptPubKeyOpcodes"] = decode_script(
+                        transactions[m]["vIn"][i]["scriptPubKey"])
+                    transactions[m]["vIn"][i]["scriptPubKeyAsm"] = decode_script(
+                        transactions[m]["vIn"][i]["scriptPubKey"], 1)
                 else:
-                    transactions[m]["vIn"][i]["scriptPubKey"] = r["address"][1:].hex()
-                transactions[m]["vIn"][i]["scriptPubKeyOpcodes"] = decode_script(
-                    transactions[m]["vIn"][i]["scriptPubKey"])
-                transactions[m]["vIn"][i]["scriptPubKeyAsm"] = decode_script(
-                    transactions[m]["vIn"][i]["scriptPubKey"], 1)
+                    if r["address"][0] in (0, 1, 2, 5, 6):
+                        if mode == "brief":
+                            transactions[m]["inputAddresses"] += 1
+
 
             for m in range(len(transactions)):
                 transactions[m]["fee"] = transactions[m]["inputsAmount"] - transactions[m]["amount"]
                 transactions[m]["outputsAmount"] = transactions[m]["amount"]
+                if mode != "verbose":
+                    transactions[m]["inputs"] = len(transactions[m]["vIn"])
+                    transactions[m]["outputs"] = len(transactions[m]["vOut"])
+                    del transactions[m]["vIn"]
+                    del transactions[m]["vOut"]
             transactions[0]["fee"] = 0
             # get information about spent output coins
-
-
-            # get information about spent output coins
-            rows = await conn.fetch("SELECT   outpoint,"
-                                    "         input_index,"
-                                      "       tx_id "
-                                      "FROM connector_unconfirmed_stxo "
-                                      "WHERE out_tx_id = ANY($1);", [s2rh(t["txId"]) for t in transactions])
-            out_map = dict()
-            for v in rows:
-                i = bytes_to_int(v["outpoint"][32:])
-                try:
-                    out_map[(rh2s(v["outpoint"][:32]), i)].append({"txId": rh2s(v["tx_id"]), "vIn": v["input_index"]})
-                except:
-                    out_map[(rh2s(v["outpoint"][:32]), i)] = [{"txId": rh2s(v["tx_id"]), "vIn": v["input_index"]}]
-
-            rows = await conn.fetch("SELECT stxo.pointer,"
-                                    "       stxo.s_pointer,"
-                                    "       transaction.tx_id  "
-                                    "FROM stxo "
-                                    "JOIN transaction "
-                                    "ON transaction.pointer = (stxo.s_pointer >> 18)<<18 "
-                                    "WHERE stxo.pointer >= $1 and "
-                                    "stxo.pointer < $2 ;", block_height << 39, (block_height + 1) << 39)
-
-            p_out_map = dict()
-            for v in rows:
-                p_out_map[v["pointer"]] = [{"txId": rh2s(v["tx_id"]),
-                                               "vIn": v["s_pointer"] & 0b111111111111111111}]
-            for t in range(len(transactions)):
-                o_pointer = (block_height << 39) + (transactions[t]["blockIndex"] << 20) + (1 << 19)
-                for i in transactions[t]["vOut"]:
+            if mode == "verbose":
+                # get information about spent output coins
+                rows = await conn.fetch("SELECT   outpoint,"
+                                        "         input_index,"
+                                          "       tx_id "
+                                          "FROM connector_unconfirmed_stxo "
+                                          "WHERE out_tx_id = ANY($1);", [s2rh(t["txId"]) for t in transactions])
+                out_map = dict()
+                for v in rows:
+                    i = bytes_to_int(v["outpoint"][32:])
                     try:
-                        transactions[t]["vOut"][i]["spent"] = p_out_map[o_pointer + i]
+                        out_map[(rh2s(v["outpoint"][:32]), i)].append({"txId": rh2s(v["tx_id"]), "vIn": v["input_index"]})
                     except:
+                        out_map[(rh2s(v["outpoint"][:32]), i)] = [{"txId": rh2s(v["tx_id"]), "vIn": v["input_index"]}]
+
+                rows = await conn.fetch("SELECT stxo.pointer,"
+                                        "       stxo.s_pointer,"
+                                        "       transaction.tx_id  "
+                                        "FROM stxo "
+                                        "JOIN transaction "
+                                        "ON transaction.pointer = (stxo.s_pointer >> 18)<<18 "
+                                        "WHERE stxo.pointer >= $1 and "
+                                        "stxo.pointer < $2  order by stxo.pointer ;",
+                                        (block_height << 39) + ((limit * (page - 1) ) << 20),
+                                        ((block_height) << 39) + ((limit * page ) << 20))
+
+                p_out_map = dict()
+                for v in rows:
+                    p_out_map[v["pointer"]] = [{"txId": rh2s(v["tx_id"]),
+                                                   "vIn": v["s_pointer"] & 0b111111111111111111}]
+                for t in range(len(transactions)):
+                    o_pointer = (block_height << 39) + (transactions[t]["blockIndex"] << 20) + (1 << 19)
+                    for i in transactions[t]["vOut"]:
                         try:
-                            transactions[t]["vOut"][i]["spent"] = out_map[(transactions[t]["txId"], int(i))]
+                            transactions[t]["vOut"][i]["spent"] = p_out_map[o_pointer + i]
                         except:
-                            transactions[t]["vOut"][i]["spent"] = []
+                            try:
+                                transactions[t]["vOut"][i]["spent"] = out_map[(transactions[t]["txId"], int(i))]
+                            except:
+                                transactions[t]["vOut"][i]["spent"] = []
 
 
     resp = {"data": transactions,
@@ -471,7 +852,7 @@ async def block_filters_batch_headers(filter_type, start_height, stop_hash, log,
         while l < stop_height:
             l += 1000
             b.append(l)
-        print(b)
+
         if stop_height is None:
             raise APIException(NOT_FOUND, "stop hash block not found", status=404)
 
@@ -701,7 +1082,11 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
                         script_hash = True if r["address"][0] in (1, 6) else False
                         witness_version = None if r["address"][0] < 5 else 0
                         try:
-                            tx["vIn"][i]["address"] = hash_to_address(r["address"][1:],
+                            if r["address"][0] == 2:
+                                ad = b"\x02" + parse_script(r["address"][1:])["addressHash"]
+                            else:
+                                ad = r["address"]
+                            tx["vIn"][i]["address"] = hash_to_address(ad[1:],
                                                                       testnet=app["testnet"],
                                                                       script_hash=script_hash,
                                                                       witness_version=witness_version)
@@ -993,15 +1378,19 @@ async def tx_by_pointers_opt_tx(pointers, hashes, option_raw_tx, app):
                             script_hash = True if d["address"][0] in (1, 6) else False
                             witness_version = None if d["address"][0] < 5 else 0
                             try:
-                                r[t]["vIn"][i]["address"] = hash_to_address(d["address"][1:],
+                                if d["address"][0] == 2:
+                                    ad = b"\x02" + parse_script(d["address"][1:])["addressHash"]
+                                else:
+                                    ad = d["address"]
+                                r[t]["vIn"][i]["address"] = hash_to_address(ad[1:],
                                                                             testnet=app["testnet"],
                                                                             script_hash = script_hash,
                                                                              witness_version = witness_version)
 
                                 r[t]["vIn"][i]["scriptPubKey"] = address_to_script(r[t]["vIn"][i]["address"], hex=1)
                             except:
+                                print(r[t]["txId"])
                                 print("??", d["address"].hex())
-
                                 raise
 
                         elif r["address"][0] == 2:
@@ -1195,7 +1584,93 @@ async def address_state(address, app):
     if camount is None: camount = 0
 
     return {"data": {"balance": {"confirmed": int(camount),
-                                "unconfirmed": int(uamount)}},
+                                 "unconfirmed": int(uamount)}},
+            "time": round(time.time() - q, 4)}
+
+async def address_state_extended(address, app):
+    q = time.time()
+    block_height = -1
+    received_count = 0
+    sent_count = 0
+    received_amount = 0
+    sent_amount = 0
+    balance = 0
+    frp = None
+    fsp = None
+    ltp = None
+    type = SCRIPT_N_TYPES[address[0]]
+
+    empty_result = {"balance": 0,
+                     "receivedAmount": 0,
+                     "receivedTxCount": 0,
+                     "sentAmount": 0,
+                     "sentTxCount": 0,
+                     "firstReceivedTxPointer": None,
+                     "firstSentTxPointer": None,
+                     "lastTxPointer": None,
+                     "outputsReceivedCount": 0,
+                     "outputsSpentCount": 0,
+                     "type": type}
+
+
+    async with app["db_pool"].acquire() as conn:
+        if address[0] == 2:
+
+            script = await conn.fetchval("SELECT script from connector_p2pk_map "
+                                         "WHERE address = $1 LIMIT 1;", address[1:])
+            if script is None:
+                script = await conn.fetchval("SELECT script from connector_unconfirmed_p2pk_map "
+                                             "WHERE address = $1 LIMIT 1;", address[1:])
+            if script is None:
+                return {"data": empty_result,
+                        "time": round(time.time() - q, 4)}
+
+            address = b"\x02" + script
+        rows = await conn.fetch("SELECT pointer, amount FROM "
+                                "transaction_map WHERE address = $1 and pointer > $2 "
+                                "ORDER BY pointer ASC;",
+                                address, block_height)
+        if rows is None:
+            return {"data": empty_result,
+                    "time": round(time.time() - q, 4)}
+
+
+    sent_tx_set = set()
+    received_tx_set = set()
+    for row in rows:
+        if row["pointer"] & (1 << 19):
+            received_count += 1
+            received_amount += row["amount"]
+            balance += row["amount"]
+            if not frp:
+                frp = row["pointer"]
+            received_tx_set.add(row["pointer"] >> 20)
+        else:
+            sent_tx_set.add(row["pointer"] >> 20)
+            sent_count += 1
+            sent_amount += row["amount"]
+            balance -= row["amount"]
+            if not fsp:
+                fsp = row["pointer"]
+        ltp = row["pointer"]
+    frp = "%s:%s" %  (frp >> 39, (frp >> 20) & 524287)
+    if ltp:
+        ltp = "%s:%s" %  (ltp >> 39, (ltp >> 20) & 524287)
+    if fsp is not None:
+        fsp = "%s:%s" %  (fsp >> 39, (fsp >> 20) & 524287)
+
+    return {"data": {"balance": balance,
+                     "receivedAmount": received_amount,
+                     "receivedTxCount": len(received_tx_set),
+                     "sentAmount": sent_amount,
+                     "sentTxCount": len(sent_tx_set),
+                     "firstReceivedTxPointer": frp,
+                     "firstSentTxPointer": fsp,
+                     "lastTxPointer": ltp,
+                     "outputsReceivedCount": received_count,
+                     "outputsSpentCount": sent_count,
+                     "type": type
+                     },
             "time": round(time.time() - q, 4)}
 
 
@@ -1244,19 +1719,58 @@ async def address_list_state(addresses, app):
 
 
 
-async def address_confirmed_utxo(address, app):
+async def address_confirmed_utxo(address,  type, from_block, order, order_by, limit, page, app):
     q = time.time()
-    async with app["db_pool"].acquire() as conn:
-        rows = await conn.fetch("SELECT  outpoint, amount, pointer  "
-                                      "FROM connector_utxo "
-                                      "WHERE address = $1 order by pointer;", address)
     utxo = []
-    for row in rows:
-        utxo.append({"txId": rh2s(row["outpoint"][:32]),
-                     "vOut": bytes_to_int(row["outpoint"][32:]),
-                     "block": row["pointer"] >> 39,
-                     "txIndex": (row["pointer"] - ((row["pointer"] >> 39) << 39)) >> 20,
-                     "amount": row["amount"]})
+    if from_block:
+        from_block = " AND pointer >= " + (from_block << 39)
+    else:
+        from_block = ""
+
+    if address[0] == 0 and type is None:
+        a = [address]
+        async with app["db_pool"].acquire() as conn:
+            script = await conn.fetchval("SELECT script from connector_p2pk_map "
+                                         "WHERE address = $1 LIMIT 1;", address[1:])
+            if script is not None:
+                a.append(b"\x02" + script)
+            print(a, from_block, limit, page)
+            rows = await conn.fetch("SELECT  outpoint, amount, pointer, address  "
+                                          "FROM connector_utxo "
+                                          "WHERE address = ANY($1) %s "
+                                    "order by  %s %s LIMIT $2 OFFSET $3;" % (from_block, order_by, order),
+                                    a, limit, limit * (page - 1))
+            for row in rows:
+                utxo.append({"txId": rh2s(row["outpoint"][:32]),
+                             "vOut": bytes_to_int(row["outpoint"][32:]),
+                             "block": row["pointer"] >> 39,
+                             "txIndex": (row["pointer"] - ((row["pointer"] >> 39) << 39)) >> 20,
+                             "amount": row["amount"],
+                             "type": SCRIPT_N_TYPES[address[0]]})
+
+    else:
+        async with app["db_pool"].acquire() as conn:
+            if address[0] == 0:
+                if type == 2:
+                    script = await conn.fetchval("SELECT script from connector_p2pk_map "
+                                                 "WHERE address = $1 LIMIT 1;", address[1:])
+                    if script is not None:
+                        address = b"\x02" + script
+                    else:
+                        return {"data": utxo, "time": round(time.time() - q, 4)}
+
+            rows = await conn.fetch("SELECT  outpoint, amount, pointer  "
+                                          "FROM connector_utxo "
+                                          "WHERE address = $1 %s "
+                                    "order by  %s %s LIMIT $2 OFFSET $3;" % (from_block, order_by, order),
+                                    address, limit, limit * (page - 1))
+
+        for row in rows:
+            utxo.append({"txId": rh2s(row["outpoint"][:32]),
+                         "vOut": bytes_to_int(row["outpoint"][32:]),
+                         "block": row["pointer"] >> 39,
+                         "txIndex": (row["pointer"] - ((row["pointer"] >> 39) << 39)) >> 20,
+                         "amount": row["amount"]})
 
     return {"data": utxo,
             "time": round(time.time() - q, 4)}
