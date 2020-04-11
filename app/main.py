@@ -344,16 +344,14 @@ class App:
     async def new_transaction_handler(self, tx, timestamp, conn):
         try:
             raw_tx = tx.serialize(hex=False)
-            tx_map = []
+            tx_map = dict()
             tx_map_append = tx_map.append
 
             if self.transaction_history:
                 if not tx["coinbase"]:
                     for i in tx["vIn"]:
-                        tx_map_append((tx["txId"],
-                                       (timestamp << 32) + (0 << 19) + i,
-                                       tx["vIn"][i]["coin"][2],
-                                       tx["vIn"][i]["coin"][1]))
+                        va = tx_map.get((tx["vIn"][i]["coin"][2], tx["txId"]), 0)
+                        tx_map[(tx["vIn"][i]["coin"][2]), tx["txId"]] = va - tx["vIn"][i]["coin"][1]
 
                 for i in tx["vOut"]:
                     out = tx["vOut"][i]
@@ -366,11 +364,15 @@ class App:
                     except:
                         address = b"".join((bytes([tx["vOut"][i]["nType"]]), tx["vOut"][i]["scriptPubKey"]))
 
-                    tx_map_append((tx["txId"], (timestamp << 32) + (1 << 19) + i, address, out["value"]))
+                    va = tx_map.get((address, tx["txId"]), 0)
+                    tx_map[(address, tx["txId"])] = va + out["value"]
+
+                tx_map_list = deque()
+                for tq in tx_map:
+                    tx_map_list.append((tq[0], tq[1], tx_map_list[tq]))
 
                 await conn.copy_records_to_table('unconfirmed_transaction_map',
-                                                 columns=["tx_id", "pointer",
-                                                          "address", "amount"], records=tx_map)
+                                                 columns=["tx_id", "address", "amount"], records=tx_map_list)
 
 
             if self.transaction:
@@ -453,13 +455,13 @@ class App:
             batch = []
             t = int(time.time())
             for row in rows:
-                pointer = (t << 32) + row["pointer"] & ((1<<20) - 1)
-                tx_id = pointer_map_tx_id[(row["pointer"] >> 20) << 20]
-                if tx_id == data["coinbase_tx_id"]: continue
-                batch.append((tx_id, pointer, row["address"], row["amount"]))
+                tx_id = pointer_map_tx_id[row["pointer"]]
+                if tx_id == data["coinbase_tx_id"]:
+                    continue
+                batch.append((tx_id, row["address"], row["amount"]))
 
             await conn.copy_records_to_table('unconfirmed_transaction_map',
-                                             columns=["tx_id", "pointer", "address", "amount"],
+                                             columns=["tx_id", "address", "amount"],
                                              records=batch)
 
         # blocks table
@@ -516,15 +518,15 @@ class App:
 
                 # unconfirmed_transaction_map
                 rows = await conn.fetch("DELETE FROM unconfirmed_transaction_map WHERE tx_id = ANY($1) "
-                                        "RETURNING  tx_id, pointer, address, amount;", hash_list)
+                                        "RETURNING  tx_id, address, amount;", hash_list)
                 utxo_batch = []
 
                 for row in rows:
                     index = block["tx"].index(rh2s(row["tx_id"]))
-                    pointer = (block["height"] << 39) + (index << 20) + (row["pointer"] & 1048575)
-                    utxo_batch.append((pointer, row["address"], row["amount"]))
+                    pointer = (block["height"] << 39) + (index << 20)
+                    utxo_batch.append((row["address"], pointer, row["amount"]))
 
-                await conn.copy_records_to_table('transaction_map', columns=["pointer", "address", "amount"],
+                await conn.copy_records_to_table('transaction_map', columns=["address", "pointer", "amount"],
                                                  records=utxo_batch)
 
                 # create stxo records
@@ -541,10 +543,10 @@ class App:
                     index = block["tx"].index(rh2s(s[3]))
                     s_pointer =  (block["height"]<<39)+(index<<20)+s[4]
                     pointer = tx_map_pointer[s[2]]+(1<<19)+bytes_to_int(s[0][32:])
-                    stxo.append((pointer, s_pointer))
+                    stxo.append((pointer, s_pointer, s[5], s[6]))
                     # print((pointer, s_pointer))
 
-                await conn.copy_records_to_table('stxo', columns=["pointer", "s_pointer"],
+                await conn.copy_records_to_table('stxo', columns=["pointer", "s_pointer", "address", "amount"],
                                                  records=stxo)
 
 
@@ -858,14 +860,14 @@ class App:
                             batch = self.tx_map_batches.delete(height)
 
                             await conn.copy_records_to_table('transaction_map',
-                                                             columns=["pointer", "address", "amount"],
+                                                             columns=["address", "pointer", "amount"],
                                                              records=batch)
 
                         if height in self.stxo_batches:
                             stxo_batch = self.stxo_batches.delete(height)
                             if stxo_batch:
                                 await conn.copy_records_to_table('stxo',
-                                                                 columns=["pointer", "s_pointer"],
+                                                                 columns=["pointer", "s_pointer", "address", "amount"],
                                                                  records=stxo_batch)
                         if height in self.blocks_stat_batches:
                             h_batch = self.blocks_stat_batches.delete(height)
@@ -903,8 +905,6 @@ class App:
     async def create_tx_history_index(self):
         if self.transaction_history:
             async with self.db_pool.acquire() as conn:
-                await conn.execute("CREATE INDEX IF NOT EXISTS txmap_address_map_pointer "
-                                   "ON transaction_map USING BTREE (address, pointer);")
                 await conn.execute("CREATE INDEX IF NOT EXISTS stxo_s_pointer "
                                    "ON stxo USING BTREE (s_pointer);")
 

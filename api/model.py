@@ -1570,30 +1570,111 @@ async def calculate_tx_merkle_proof_by_pointer(pointer, app):
 
 
 
-async def address_state(address, app):
+async def address_state(address,  type, app):
     q = time.time()
-    async with app["db_pool"].acquire() as conn:
-        uamount = await conn.fetchval("SELECT sum(amount) "
-                                      "FROM connector_unconfirmed_utxo "
-                                      "WHERE address = $1;", address)
-        camount = await conn.fetchval("SELECT  sum(amount)  "
-                                      "FROM connector_utxo "
-                                      "WHERE address = $1;", address)
+
+    if address[0] == 0 and type is None:
+        a = [address]
+        async with app["db_pool"].acquire() as conn:
+            script = await conn.fetchval("SELECT script from connector_unconfirmed_p2pk_map "
+                                         "WHERE address = $1 LIMIT 1;", address[1:])
+            if script is None:
+                script = await conn.fetchval("SELECT script from connector_p2pk_map "
+                                             "WHERE address = $1 LIMIT 1;", address[1:])
+            if script is not None:
+                a.append(b"\x02" + script)
+            uamount = await conn.fetchval("SELECT  sum(amount) FROM connector_unconfirmed_utxo "
+                                          "WHERE address = ANY($1);", a)
+            camount = await conn.fetchval("SELECT  sum(amount) FROM connector_utxo "
+                                          "WHERE address = ANY($1);", a)
+    else:
+        async with app["db_pool"].acquire() as conn:
+            if address[0] == 0:
+                if type == 2:
+                    script = await conn.fetchval("SELECT script from connector_unconfirmed_p2pk_map "
+                                                 "WHERE address = $1 LIMIT 1;", address[1:])
+                    if script is None:
+                        script = await conn.fetchval("SELECT script from connector_p2pk_map "
+                                                     "WHERE address = $1 LIMIT 1;", address[1:])
+                    if script is not None:
+                        address = b"\x02" + script
+                    else:
+                        return {"data":{"confirmed": 0,
+                                        "unconfirmed": 0},
+                                "time": round(time.time() - q, 4)}
+
+            uamount = await conn.fetchval("SELECT  sum(amount) FROM connector_unconfirmed_utxo "
+                                          "WHERE address = $1;", address)
+            camount = await conn.fetchval("SELECT  sum(amount) FROM connector_utxo "
+                                          "WHERE address = $1;", address)
 
     if uamount is None: uamount = 0
     if camount is None: camount = 0
-
-    return {"data": {"balance": {"confirmed": int(camount),
-                                 "unconfirmed": int(uamount)}},
+    return {"data": {"confirmed": int(camount),
+                     "unconfirmed": int(uamount)},
             "time": round(time.time() - q, 4)}
+
+
+async def address_transactions(address,  type, app):
+    q = time.time()
+
+    if address[0] == 0 and type is None:
+        a = [address]
+        async with app["db_pool"].acquire() as conn:
+            script = await conn.fetchval("SELECT script from connector_p2pk_map "
+                                         "WHERE address = $1 LIMIT 1;", address[1:])
+            if script is not None:
+                a.append(b"\x02" + script)
+            rows = await conn.fetch("SELECT  transaction.tx_id, transaction.pointer  "
+                                    "FROM transaction_map "
+                                    "WHERE address = ANY($1)  order by transaction_map.pointer DESC LIMIT 10;", a)
+            for row in rows:
+                print(rh2s(row["tx_id"]), row["pointer"]>>39)
+    else:
+        async with app["db_pool"].acquire() as conn:
+            if address[0] == 0:
+                if type == 2:
+                    script = await conn.fetchval("SELECT script from connector_unconfirmed_p2pk_map "
+                                                 "WHERE address = $1 LIMIT 1;", address[1:])
+                    if script is None:
+                        script = await conn.fetchval("SELECT script from connector_p2pk_map "
+                                                     "WHERE address = $1 LIMIT 1;", address[1:])
+                    if script is not None:
+                        address = b"\x02" + script
+                    else:
+                        return {"data":{"confirmed": 0,
+                                        "unconfirmed": 0},
+                                "time": round(time.time() - q, 4)}
+
+            uamount = await conn.fetchval("SELECT  sum(amount) FROM connector_unconfirmed_utxo "
+                                          "WHERE address = $1;", address)
+            camount = await conn.fetchval("SELECT  sum(amount) FROM connector_utxo "
+                                          "WHERE address = $1;", address)
+
+    if uamount is None: uamount = 0
+    if camount is None: camount = 0
+    return {"data": {"confirmed": int(camount),
+                     "unconfirmed": int(uamount)},
+            "time": round(time.time() - q, 4)}
+
+
+
 
 async def address_state_extended(address, app):
     q = time.time()
     block_height = -1
-    received_count = 0
-    sent_count = 0
+    received_outs_count = 0
+    spent_outs_count = 0
+    pending_received_outs_count = 0
+    pending_spent_outs_count = 0
+    pending_received_amount = 0
+    pending_sent_amount = 0
+    pending_received_tx_count = 0
+    pending_sent_tx_count = 0
     received_amount = 0
     sent_amount = 0
+    received_tx_count = 0
+    sent_tx_count = 0
     balance = 0
     frp = None
     fsp = None
@@ -1601,17 +1682,30 @@ async def address_state_extended(address, app):
     type = SCRIPT_N_TYPES[address[0]]
 
     empty_result = {"balance": 0,
-                     "receivedAmount": 0,
-                     "receivedTxCount": 0,
-                     "sentAmount": 0,
-                     "sentTxCount": 0,
-                     "firstReceivedTxPointer": None,
-                     "firstSentTxPointer": None,
-                     "lastTxPointer": None,
-                     "outputsReceivedCount": 0,
-                     "outputsSpentCount": 0,
-                     "type": type}
+                    "receivedAmount": 0,
+                    "receivedTxCount": 0,
+                    "sentAmount": 0,
+                    "sentTxCount": 0,
+                    "firstReceivedTxPointer": None,
+                    "firstSentTxPointer": None,
+                    "lastTxPointer": None,
+                    "largestTxAmount": None,
+                    "largestTxPointer": None,
 
+                    "largestSpentTxAmount": None,
+                    "largestSpentTxPointer": None,
+                    "largestReceivedTxAmount": None,
+                    "largestReceivedTxPointer": None,
+
+                    "receivedOutsCount": 0,
+                    "spentOutsCount": 0,
+                    "pendingReceivedAmount": 0,
+                    "pendingSentAmount": 0,
+                    "pendingReceivedTxCount": 0,
+                    "pendingSentTxCount": 0,
+                    "pendingReceivedOutsCount": 0,
+                    "pendingSpentOutsCount": 0,
+                    "type": type}
 
     async with app["db_pool"].acquire() as conn:
         if address[0] == 2:
@@ -1630,77 +1724,178 @@ async def address_state_extended(address, app):
                                 "transaction_map WHERE address = $1 and pointer > $2 "
                                 "ORDER BY pointer ASC;",
                                 address, block_height)
-        if rows is None:
+        urows = await conn.fetch("SELECT tx_id, pointer, amount FROM "
+                                "unconfirmed_transaction_map WHERE address = $1;",
+                                address)
+
+        if rows is None and urows is None:
             return {"data": empty_result,
                     "time": round(time.time() - q, 4)}
 
 
-    sent_tx_set = set()
-    received_tx_set = set()
+    tx_map = dict()
     for row in rows:
         if row["pointer"] & (1 << 19):
-            received_count += 1
+            received_outs_count += 1
             received_amount += row["amount"]
             balance += row["amount"]
             if not frp:
                 frp = row["pointer"]
-            received_tx_set.add(row["pointer"] >> 20)
+
+            try:
+                tx_map[row["pointer"] >> 20] += row["amount"]
+            except:
+                tx_map[row["pointer"] >> 20] = row["amount"]
+
         else:
-            sent_tx_set.add(row["pointer"] >> 20)
-            sent_count += 1
+            spent_outs_count += 1
             sent_amount += row["amount"]
             balance -= row["amount"]
             if not fsp:
                 fsp = row["pointer"]
+            try:
+                tx_map[row["pointer"] >> 20] -= row["amount"]
+            except:
+                tx_map[row["pointer"] >> 20] = 0 - row["amount"]
+
         ltp = row["pointer"]
+    largest_spent_amount = 0
+    largest_received_amount = 0
+    largest_spent_pointer = None
+    largest_received_pointer = None
+    for k in tx_map:
+        if tx_map[k] < 0:
+            sent_tx_count += 1
+            if largest_spent_amount > tx_map[k]:
+                largest_spent_amount = tx_map[k]
+                largest_spent_pointer = "%s:%s" %  (k >> 19, k  & 524287)
+        else:
+            received_tx_count += 1
+            if largest_received_amount < tx_map[k]:
+                largest_received_amount = tx_map[k]
+                largest_received_pointer = "%s:%s" %  (k >> 19, k  & 524287)
+    if largest_spent_amount is not None:
+        largest_spent_amount = abs(largest_spent_amount)
+
     frp = "%s:%s" %  (frp >> 39, (frp >> 20) & 524287)
     if ltp:
         ltp = "%s:%s" %  (ltp >> 39, (ltp >> 20) & 524287)
     if fsp is not None:
         fsp = "%s:%s" %  (fsp >> 39, (fsp >> 20) & 524287)
 
+    tx_map = dict()
+    for row in urows:
+        if row["pointer"] & (1 << 19):
+            pending_received_outs_count += 1
+            pending_received_amount += row["amount"]
+            try:
+                tx_map[row["tx_id"]] += row["amount"]
+            except:
+                tx_map[row["tx_id"]] = row["amount"]
+        else:
+            pending_spent_outs_count += 1
+            pending_sent_amount += row["amount"]
+            try:
+                tx_map[row["tx_id"]] -= row["amount"]
+            except:
+                tx_map[row["tx_id"]] = 0 - row["amount"]
+
+    for k in tx_map:
+        if tx_map[k] < 0:
+            pending_sent_tx_count += 1
+        else:
+            pending_received_tx_count += 1
+
     return {"data": {"balance": balance,
                      "receivedAmount": received_amount,
-                     "receivedTxCount": len(received_tx_set),
+                     "receivedTxCount": received_tx_count,
                      "sentAmount": sent_amount,
-                     "sentTxCount": len(sent_tx_set),
+                     "sentTxCount": sent_tx_count,
                      "firstReceivedTxPointer": frp,
                      "firstSentTxPointer": fsp,
                      "lastTxPointer": ltp,
-                     "outputsReceivedCount": received_count,
-                     "outputsSpentCount": sent_count,
+
+                     "largestSpentTxAmount": largest_spent_amount,
+                     "largestSpentTxPointer": largest_spent_pointer,
+                     "largestReceivedTxAmount": largest_received_amount,
+                     "largestReceivedTxPointer": largest_received_pointer,
+
+
+                     "receivedOutsCount": received_outs_count,
+                     "spentOutsCount": spent_outs_count,
+                     "pendingReceivedAmount": pending_received_amount,
+                     "pendingSentAmount": pending_sent_amount,
+                     "pendingReceivedTxCount": pending_received_tx_count,
+                     "pendingSentTxCount": pending_sent_tx_count,
+                     "pendingReceivedOutsCount": pending_received_outs_count,
+                     "pendingSpentOutsCount": pending_spent_outs_count,
                      "type": type
                      },
             "time": round(time.time() - q, 4)}
 
 
-async def address_list_state(addresses, app):
+async def address_list_state(addresses, type, app):
     q = time.time()
+    pubkey_addresses = []
+    pubkey_map = dict()
+    a = set(addresses.keys())
+
+    for address in addresses.keys():
+        if address[0] == 0:
+            pubkey_addresses.append(address[1:])
+
     async with app["db_pool"].acquire() as conn:
+        if pubkey_addresses and (type is None or type == 2):
+            urows = await conn.fetch("SELECT address, script from connector_unconfirmed_p2pk_map "
+                                         "WHERE address = ANY($1);", pubkey_addresses)
+            rows = await conn.fetch("SELECT script, address from connector_p2pk_map "
+                                             "WHERE address = ANY($1);", pubkey_addresses)
+            for row in urows:
+                pubkey_map[b"\x02" + row["script"]] = b"\x00" + row["address"]
+                a.add(b"\x02" + row["script"])
+                if type == 2:
+                    a.remove(b"\x00" + row["address"])
+
+            for row in rows:
+                pubkey_map[b"\x02" + row["script"]] = b"\x00" + row["address"]
+                a.add(b"\x02" + row["script"])
+                if type == 2:
+                    a.remove(b"\x00" + row["address"])
+
         u_rows = await conn.fetch("SELECT address, amount "
                                       "FROM connector_unconfirmed_utxo "
-                                      "WHERE address = ANY($1);", addresses.keys())
+                                      "WHERE address = ANY($1);", a)
         c_rows = await conn.fetch("SELECT  address, amount , outpoint "
                                       "FROM connector_utxo "
-                                      "WHERE address = ANY($1);", addresses.keys())
+                                      "WHERE address = ANY($1);", a)
 
     r = dict()
     utxo = dict()
 
     for row in u_rows:
         try:
-            r[addresses[row["address"]]]["unconfirmed"] += row["amount"]
+            a = addresses[row["address"]]
         except:
-            r[addresses[row["address"]]] = {"unconfirmed": row["amount"],
+            a = addresses[pubkey_map[row["address"]]]
+
+        try:
+            r[a]["unconfirmed"] += row["amount"]
+        except:
+            r[a] = {"unconfirmed": row["amount"],
                                             "confirmed": 0}
 
     for row in c_rows:
         try:
-            r[addresses[row["address"]]]["confirmed"] += row["amount"]
+            a = addresses[row["address"]]
         except:
-            r[addresses[row["address"]]] = {"confirmed": row["amount"],
+            a = addresses[pubkey_map[row["address"]]]
+
+        try:
+            r[a]["confirmed"] += row["amount"]
+        except:
+            r[a] = {"confirmed": row["amount"],
                                             "uconfirmed": 0}
-        utxo[row["outpoint"]] = (addresses[row["address"]], row["amount"])
+        utxo[row["outpoint"]] = (a, row["amount"])
 
     async with app["db_pool"].acquire() as conn:
         s_rows = await conn.fetch("SELECT  outpoint "
@@ -1723,7 +1918,7 @@ async def address_confirmed_utxo(address,  type, from_block, order, order_by, li
     q = time.time()
     utxo = []
     if from_block:
-        from_block = " AND pointer >= " + (from_block << 39)
+        from_block = " AND pointer >= " + str(from_block << 39)
     else:
         from_block = ""
 
@@ -1734,19 +1929,18 @@ async def address_confirmed_utxo(address,  type, from_block, order, order_by, li
                                          "WHERE address = $1 LIMIT 1;", address[1:])
             if script is not None:
                 a.append(b"\x02" + script)
-            print(a, from_block, limit, page)
             rows = await conn.fetch("SELECT  outpoint, amount, pointer, address  "
                                           "FROM connector_utxo "
                                           "WHERE address = ANY($1) %s "
                                     "order by  %s %s LIMIT $2 OFFSET $3;" % (from_block, order_by, order),
-                                    a, limit, limit * (page - 1))
+                                    a, limit if limit else "ALL", limit * (page - 1))
             for row in rows:
                 utxo.append({"txId": rh2s(row["outpoint"][:32]),
                              "vOut": bytes_to_int(row["outpoint"][32:]),
                              "block": row["pointer"] >> 39,
                              "txIndex": (row["pointer"] - ((row["pointer"] >> 39) << 39)) >> 20,
                              "amount": row["amount"],
-                             "type": SCRIPT_N_TYPES[address[0]]})
+                             "type": SCRIPT_N_TYPES[row["address"][0]]})
 
     else:
         async with app["db_pool"].acquire() as conn:
@@ -1776,17 +1970,56 @@ async def address_confirmed_utxo(address,  type, from_block, order, order_by, li
             "time": round(time.time() - q, 4)}
 
 
-async def address_unconfirmed_utxo(address, app):
+async def address_unconfirmed_utxo(address,  type, order, limit, page, app):
     q = time.time()
-    async with app["db_pool"].acquire() as conn:
-        rows = await conn.fetch("SELECT  outpoint, amount  "
-                                      "FROM connector_unconfirmed_utxo "
-                                      "WHERE address = $1 order by pointer;", address)
     utxo = []
-    for row in rows:
-        utxo.append({"txId": rh2s(row["outpoint"][:32]),
-                     "vOut": bytes_to_int(row["outpoint"][32:]),
-                     "amount": row["amount"]})
+
+    if address[0] == 0 and type is None:
+        a = [address]
+        async with app["db_pool"].acquire() as conn:
+            script = await conn.fetchval("SELECT script from connector_unconfirmed_p2pk_map "
+                                         "WHERE address = $1 LIMIT 1;", address[1:])
+            if script is None:
+                script = await conn.fetchval("SELECT script from connector_p2pk_map "
+                                             "WHERE address = $1 LIMIT 1;", address[1:])
+            if script is not None:
+                a.append(b"\x02" + script)
+            rows = await conn.fetch("SELECT  outpoint, amount, address  "
+                                          "FROM connector_unconfirmed_utxo "
+                                    "WHERE address = ANY($1)  "
+                                    "order by  amount %s LIMIT $2 OFFSET $3;" %  order,
+                                    a, limit if limit else "ALL", limit * (page - 1))
+            for row in rows:
+                utxo.append({"txId": rh2s(row["outpoint"][:32]),
+                             "vOut": bytes_to_int(row["outpoint"][32:]),
+                             "amount": row["amount"],
+                             "type": SCRIPT_N_TYPES[row["address"][0]]})
+
+    else:
+        async with app["db_pool"].acquire() as conn:
+            if address[0] == 0:
+                if type == 2:
+                    script = await conn.fetchval("SELECT script from connector_unconfirmed_p2pk_map "
+                                                 "WHERE address = $1 LIMIT 1;", address[1:])
+                    if script is None:
+                        script = await conn.fetchval("SELECT script from connector_p2pk_map "
+                                                     "WHERE address = $1 LIMIT 1;", address[1:])
+                    if script is not None:
+                        address = b"\x02" + script
+                    else:
+                        return {"data": utxo, "time": round(time.time() - q, 4)}
+
+
+            rows = await conn.fetch("SELECT  outpoint, amount, address  "
+                                          "FROM connector_unconfirmed_utxo "
+                                    "WHERE address = $1 "
+                                    "order by  amount %s LIMIT $2 OFFSET $3;" %  order,
+                                    address, limit if limit else "ALL", limit * (page - 1))
+
+        for row in rows:
+            utxo.append({"txId": rh2s(row["outpoint"][:32]),
+                         "vOut": bytes_to_int(row["outpoint"][32:]),
+                         "amount": row["amount"]})
 
     return {"data": utxo,
             "time": round(time.time() - q, 4)}

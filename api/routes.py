@@ -25,14 +25,15 @@ def setup_routes(app):
     app.router.add_route('GET', '/rest/block/utxo/{block_pointer}', get_block_utxo) # test after sync completed
 
     if app["transaction_history"]:
-        # app.router.add_route('GET', '/rest/address/state/{address}', get_address_state_extended)
-        app.router.add_route('GET', '/rest/address/state/{address}', get_address_state)
+        app.router.add_route('GET', '/rest/address/state/{address}', get_address_state_extended)
+        app.router.add_route('GET', '/rest/address/transactions/{address}', get_address_transactions)
     else:
         app.router.add_route('GET', '/rest/address/state/{address}', get_address_state)
     app.router.add_route('POST', '/rest/addresses/state/by/address/list', get_address_state_by_list)
 
     app.router.add_route('GET', '/rest/address/utxo/{address}', get_address_confirmed_utxo)
-    app.router.add_route('GET', '/rest/address/unconfirmed/utxo/{address}', get_address_unconfirmed_utxo)
+    app.router.add_route('GET', '/rest/address/uutxo/{address}', get_address_unconfirmed_utxo)
+
 
     if app["blocks_data"]:
         app.router.add_route('GET', '/rest/block/data/last', get_block_data_last)

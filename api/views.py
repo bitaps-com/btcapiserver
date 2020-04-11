@@ -876,6 +876,7 @@ async def get_transaction_merkle_proof(request):
                 "message": "internal server error",
                 "details": ""}
 
+
     try:
         if len(pointer) == 64:
             try:
@@ -964,6 +965,17 @@ async def get_address_state(request):
                 "message": "internal server error",
                 "details": ""}
 
+    parameters = request.rel_url.query
+
+    try:
+        type = None
+        if parameters["type"] == "P2PKH":
+            type = 0
+        if parameters["type"] == "PUBKEY":
+            type = 2
+    except:
+        pass
+
     try:
         if addr_type in (0, 1, 5, 6):
             address_net = address_net_type(address)
@@ -981,7 +993,7 @@ async def get_address_state(request):
             except:
                 raise APIException(PARAMETER_ERROR, "invalid address")
 
-        response = await address_state(address, request.app)
+        response = await address_state(address, type, request.app)
         status = 200
     except APIException as err:
         status = err.status
@@ -996,22 +1008,28 @@ async def get_address_state(request):
         return web.json_response(response, dumps=json.dumps, status = status)
 
 
-async def get_address_state_extended(request):
+async def get_address_transactions(request):
     log = request.app["log"]
     address = request.match_info['address']
     addr_type = address_type(address, num=True)
-    log.info("get address extended state  %s" % str(request.rel_url))
+    log.info("GET %s" % str(request.rel_url))
+
 
     status = 500
     response = {"error_code": INTERNAL_SERVER_ERROR,
                 "message": "internal server error",
                 "details": ""}
+
+    parameters = request.rel_url.query
+
     try:
-        splitted =  request.match_info['type_splitted'] == True
-        if not splitted:
-            splitted = request.match_info['type_splitted'] == True
+        type = None
+        if parameters["type"] == "P2PKH":
+            type = 0
+        if parameters["type"] == "PUBKEY":
+            type = 2
     except:
-        splitted = False
+        pass
 
     try:
         if addr_type in (0, 1, 5, 6):
@@ -1029,12 +1047,133 @@ async def get_address_state_extended(request):
                 address = bytes_needed(address)
             except:
                 raise APIException(PARAMETER_ERROR, "invalid address")
-        if address[0] == 0:
-            p2pkh = await address_state_extended(address, request.app)
-            address =  b"".join((b"\x02", address[1:]))
-            pubkey = await address_state_extended(address, request.app)
-            if not splitted:
 
+        response = await address_transactions(address, type, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]: log.error(str(traceback.format_exc()))
+        else: log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+
+async def get_address_state_by_list(request):
+    log = request.app["log"]
+    log.info("POST %s" % str(request.rel_url))
+    addresses = dict()
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+
+    parameters = request.rel_url.query
+
+    try:
+        type = None
+        if parameters["type"] == "P2PKH":
+            type = 0
+        if parameters["type"] == "PUBKEY":
+            type = 2
+    except:
+        pass
+
+
+    try:
+        try:
+            await request.post()
+            data = await request.json()
+            if len(data) > 50:
+                raise APIException(PARAMETER_ERROR, "only 50 addresses allowed")
+            for address in data:
+                origin = address
+                addr_type = address_type(address, num=True)
+                if addr_type in (0, 1, 5, 6):
+                    address_net = address_net_type(address)
+                    if address_net == "testnet" and not request.app["testnet"]:
+                        raise APIException(PARAMETER_ERROR, "testnet address is invalid for mainnet")
+                    if address_net == "mainnet" and request.app["testnet"]:
+                        raise APIException(PARAMETER_ERROR, "mainnet address is invalid for testnet")
+                    try:
+                        address = b"".join((bytes([addr_type]), address_to_hash(address, hex=False)))
+                    except:
+                        raise APIException(PARAMETER_ERROR, "invalid address")
+                else:
+                    try:
+                        address = bytes_needed(address)
+                    except:
+                        raise APIException(PARAMETER_ERROR, "invalid address")
+                addresses[address] = origin
+        except:
+            raise APIException(JSON_DECODE_ERROR, "invalid transaction pointers list")
+
+        response = await address_list_state(addresses, type, request.app)
+
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]: log.error(str(traceback.format_exc()))
+        else: log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+
+
+async def get_address_state_extended(request):
+    log = request.app["log"]
+    address = request.match_info['address']
+    addr_type = address_type(address, num=True)
+    log.info("get address extended state  %s" % str(request.rel_url))
+
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+    parameters = request.rel_url.query
+    type = None
+    try:
+        if parameters["type"] == "P2PKH":
+            type = 0
+        if parameters["type"] == "PUBKEY":
+            type = 2
+        if parameters["type"] == "splitted":
+            type = 3
+    except:
+        pass
+
+    try:
+        if addr_type in (0, 1, 5, 6):
+            address_net = address_net_type(address)
+            if address_net == "testnet" and not request.app["testnet"]:
+                raise APIException(PARAMETER_ERROR, "testnet address is invalid for mainnet")
+            if address_net == "mainnet" and request.app["testnet"]:
+                raise APIException(PARAMETER_ERROR, "mainnet address is invalid for testnet")
+            try:
+                address = b"".join((bytes([addr_type]), address_to_hash(address, hex=False)))
+            except:
+                raise APIException(PARAMETER_ERROR, "invalid address")
+        else:
+            raise APIException(PARAMETER_ERROR, "invalid address")
+
+
+        if address[0] == 0:
+            if type is None or type == 0 or type == 3:
+                p2pkh = await address_state_extended(address, request.app)
+            if type is None or type == 2 or type == 3:
+                address =  b"".join((b"\x02", address[1:]))
+                pubkey = await address_state_extended(address, request.app)
+
+            if type is None:
                 if p2pkh["data"]["firstReceivedTxPointer"] is None and pubkey["data"]["firstReceivedTxPointer"] is None:
                     frp = None
                 elif p2pkh["data"]["firstReceivedTxPointer"] is not None and pubkey["data"]["firstReceivedTxPointer"] is not None:
@@ -1073,6 +1212,41 @@ async def get_address_state_extended(request):
                     else:
                         ltp = pubkey["data"]["lastTxPointer"]
 
+                if p2pkh["data"]["largestSpentTxAmount"] is None and pubkey["data"]["lastTxPointer"] is None:
+                    lsta = None
+                    lstp = None
+                elif p2pkh["data"]["largestSpentTxAmount"] is not None and pubkey["data"]["largestSpentTxAmount"] is not None:
+                    if p2pkh["data"]["largestSpentTxAmount"] > pubkey["data"]["largestSpentTxAmount"]:
+                        lsta = p2pkh["data"]["largestSpentTxAmount"]
+                        lstp = p2pkh["data"]["largestSpentTxPointer"]
+                    else:
+                        lsta = pubkey["data"]["largestSpentTxAmount"]
+                        lstp = pubkey["data"]["largestSpentTxPointer"]
+                else:
+                    if p2pkh["data"]["largestSpentTxAmount"] is not None:
+                        lsta = p2pkh["data"]["largestSpentTxAmount"]
+                        lstp = p2pkh["data"]["largestSpentTxPointer"]
+                    else:
+                        lsta = pubkey["data"]["largestSpentTxAmount"]
+                        lstp = pubkey["data"]["largestSpentTxPointer"]
+
+                if p2pkh["data"]["largestReceivedTxAmount"] is None and pubkey["data"]["largestReceivedTxAmount"] is None:
+                    lrta = None
+                    lrtp = None
+                elif p2pkh["data"]["largestReceivedTxAmount"] is not None and pubkey["data"]["largestReceivedTxAmount"] is not None:
+                    if p2pkh["data"]["largestReceivedTxAmount"] > pubkey["data"]["largestReceivedTxAmount"]:
+                        lrta = p2pkh["data"]["largestReceivedTxAmount"]
+                        lrtp = p2pkh["data"]["largestReceivedTxPointer"]
+                    else:
+                        lrta = pubkey["data"]["largestReceivedTxAmount"]
+                        lrtp = pubkey["data"]["largestReceivedTxPointer"]
+                else:
+                    if p2pkh["data"]["largestReceivedTxAmount"] is not None:
+                        lrta = p2pkh["data"]["largestReceivedTxAmount"]
+                        lrtp = p2pkh["data"]["largestReceivedTxPointer"]
+                    else:
+                        lrta = pubkey["data"]["largestReceivedTxAmount"]
+                        lrtp = pubkey["data"]["largestReceivedTxPointer"]
 
                 response = {"data": {"balance": p2pkh["data"]["balance"] + pubkey["data"]["balance"],
                                    "receivedAmount": p2pkh["data"]["receivedAmount"] + pubkey["data"]["receivedAmount"],
@@ -1082,77 +1256,33 @@ async def get_address_state_extended(request):
                                    "firstReceivedTxPointer": frp,
                                    "firstSentTxPointer": fsp,
                                    "lastTxPointer": ltp,
-                                   "outputsReceivedCount": p2pkh["data"]["outputsReceivedCount"] + pubkey["data"]["outputsReceivedCount"],
-                                   "outputsSpentCount": p2pkh["data"]["outputsSpentCount"] + pubkey["data"]["outputsSpentCount"],
-                                   "type": "P2PKH+PUBKEY"},
+                                   "largestReceivedTxAmount": lrta,
+                                   "largestReceivedTxPointer": lrtp,
+                                   "largestSpentTxAmount": lsta,
+                                   "largestSpentTxPointer": lstp,
+                                   "receivedOutsCount": p2pkh["data"]["receivedOutsCount"] + pubkey["data"]["receivedOutsCount"],
+                                   "spentOutsCount": p2pkh["data"]["spentOutsCount"] + pubkey["data"]["spentOutsCount"],
+                                   "pendingReceivedAmount": p2pkh["data"]["pendingReceivedAmount"] + pubkey["data"]["pendingReceivedAmount"],
+                                   "pendingSentAmount": p2pkh["data"]["pendingSentAmount"] + pubkey["data"]["pendingSentAmount"],
+                                   "pendingReceivedTxCount": p2pkh["data"]["pendingReceivedTxCount"] + pubkey["data"]["pendingReceivedTxCount"],
+                                   "pendingSentTxCount": p2pkh["data"]["pendingSentTxCount"] + pubkey["data"]["pendingSentTxCount"],
+                                   "pendingReceivedOutsCount": p2pkh["data"]["pendingReceivedOutsCount"] + pubkey["data"]["pendingReceivedOutsCount"],
+                                   "pendingSpentOutsCount": p2pkh["data"]["pendingSpentOutsCount"] + pubkey["data"]["pendingSpentOutsCount"],
+                                   "type": "PUBKEY+P2PKH"},
                         "time": p2pkh["time"] + pubkey["time"]}
-            else:
+            elif type == 3:
                 response = {"data": {"P2PKH": p2pkh["data"],
                                      "PUBKEY": pubkey["data"]},
                             "time": p2pkh["time"] + pubkey["time"]}
-
-
-
+            elif type == 0:
+                response = p2pkh
+            elif type == 2:
+                response = pubkey
 
         else:
             response = await address_state_extended(address, request.app)
-            if splitted:
+            if type == 3:
                 response["data"] = {response["data"]["type"]: response["data"]}
-        status = 200
-    except APIException as err:
-        status = err.status
-        response = {"error_code": err.err_code,
-                    "message": err.message,
-                    "details": err.details
-                    }
-    except Exception as err:
-        if request.app["debug"]: log.error(str(traceback.format_exc()))
-        else: log.error(str(err))
-    finally:
-        return web.json_response(response, dumps=json.dumps, status = status)
-
-
-
-async def get_address_state_by_list(request):
-    log = request.app["log"]
-    log.info("POST %s" % str(request.rel_url))
-    addresses = dict()
-    status = 500
-    response = {"error_code": INTERNAL_SERVER_ERROR,
-                "message": "internal server error",
-                "details": ""}
-
-
-    try:
-        try:
-            await request.post()
-            data = await request.json()
-            if len(data) > 50:
-                raise APIException(PARAMETER_ERROR, "only 50 addresses allowed")
-            for address in data:
-                origin = address
-                addr_type = address_type(address, num=True)
-                if addr_type in (0, 1, 5, 6):
-                    address_net = address_net_type(address)
-                    if address_net == "testnet" and not request.app["testnet"]:
-                        raise APIException(PARAMETER_ERROR, "testnet address is invalid for mainnet")
-                    if address_net == "mainnet" and request.app["testnet"]:
-                        raise APIException(PARAMETER_ERROR, "mainnet address is invalid for testnet")
-                    try:
-                        address = b"".join((bytes([addr_type]), address_to_hash(address, hex=False)))
-                    except:
-                        raise APIException(PARAMETER_ERROR, "invalid address")
-                else:
-                    try:
-                        address = bytes_needed(address)
-                    except:
-                        raise APIException(PARAMETER_ERROR, "invalid address")
-                addresses[address] = origin
-        except:
-            raise APIException(JSON_DECODE_ERROR, "invalid transaction pointers list")
-
-        response = await address_list_state(addresses, request.app)
-
         status = 200
     except APIException as err:
         status = err.status
@@ -1255,13 +1385,43 @@ async def get_address_unconfirmed_utxo(request):
     log = request.app["log"]
     address = request.match_info['address']
     addr_type = address_type(address, num=True)
-    log.info("get address %s" % address)
+    log.info("get address confirmed utxo %s" % address)
 
 
     status = 500
     response = {"error_code": INTERNAL_SERVER_ERROR,
                 "message": "internal server error",
                 "details": ""}
+
+    parameters = request.rel_url.query
+
+    try:
+        type = None
+        if parameters["type"] == "P2PKH":
+            type = 0
+        if parameters["type"] == "PUBKEY":
+            type = 2
+    except:
+        pass
+
+    try:
+        order = "asc" if parameters["order"] == "desc" else "desc"
+    except:
+        order = "asc"
+
+    try:
+        limit = int(parameters["limit"])
+        if  not (limit > 0 and limit <= request.app["get_block_utxo_page_limit"]):
+            raise Exception()
+    except:
+        limit = request.app["get_block_utxo_page_limit"]
+
+    try:
+        page = int(parameters["page"])
+        if page <= 0: raise Exception()
+    except:
+        page = 1
+
 
     try:
         if addr_type in (0, 1, 5, 6):
@@ -1275,12 +1435,9 @@ async def get_address_unconfirmed_utxo(request):
             except:
                 raise APIException(PARAMETER_ERROR, "invalid address")
         else:
-            try:
-                address = bytes_needed(address)
-            except:
-                raise APIException(PARAMETER_ERROR, "invalid address")
+            raise APIException(PARAMETER_ERROR, "invalid address")
 
-        response = await address_unconfirmed_utxo(address, request.app)
+        response = await address_unconfirmed_utxo(address, type, order, limit, page, request.app)
         status = 200
     except APIException as err:
         status = err.status
@@ -1292,6 +1449,9 @@ async def get_address_unconfirmed_utxo(request):
         log.error(str(traceback.format_exc()))
     finally:
         return web.json_response(response, dumps=json.dumps, status = status)
+
+
+
 
 
 async def test_filter(request):
