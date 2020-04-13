@@ -1,39 +1,75 @@
 [POSTGRESQL]
 
 dsn = postgres://postgres:test@/test
-pool_threads = 100
-
+server_threads = 70
+client_threads = 70
 
 [CONNECTOR]
 
-zeromq = tcp://127.0.0.1:8900
-rpc = http://bitaps:testnetWfefeefsSWd2@127.0.0.1:8332
+zeromq = tcp://127.0.0.1:38900
+rpc = http://bitaps:testnetWfefeefsSWd2@127.0.0.1:38332
 log_level = debug
+testnet = 0
+
 
 [SYNCHRONIZATION]
 
-block_preload_workers = 4
-block_preload_batch_size = 50000000
-utxo_cache_size = 3000000
+block_preload_workers = 6
+block_preload_batch_size = 40000000
+utxo_cache_size = 5000000
+coinbase_maturity = 100
+
+[NODE]
+
+host = 127.0.0.1
+port = 4343
+testnet = 0
+block_interval = 10
+seed_dns = seed.bitcoin.sipa.be,dnsseed.bluematt.me,dnsseed.bitcoin.dashjr.org,seed.bitcoinstats.com,bitseed.xf2.org
+
+magic = 0xD9B4BEF9
+version = 70015
+services = 0b0000000000000000000000000000000000000000000000000000000000000001
+user_agent = /btcapi_server:1.0.1/
+ping_timeout = 5
+connect_timeout = 15
+handshake_timeout = 6
+
 
 
 [SERVER]
 
 log_level = debug
+api_log_level = debug
+api_endpoint_test_base_url = http://localhost:4455
 
 [OPTIONS]
+
+# transactions
 
 transaction = on
 merkle_proof = on
 transaction_history = on
+
+# blocks
+blocks_data = on
+block_filters = off
+
+# addresses
 address_state = on
-address_timeline = on
+address_timeline = off
+
+# analytica
 blockchain_analytica = off
+mempool_analytica = off
+
+
+
 
 deterministic_wallet = off
 nodes_discovery = off
 transaction_fee_analytica = off
-mempool_analytica = off
+
 market_data = off
 
 flush_mempool_on_start = off
