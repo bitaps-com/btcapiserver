@@ -453,7 +453,6 @@ class App:
                                     "RETURNING  pointer, address, amount;",  data["height"] << 39)
 
             batch = []
-            t = int(time.time())
             for row in rows:
                 tx_id = pointer_map_tx_id[row["pointer"]]
                 if tx_id == data["coinbase_tx_id"]:
@@ -907,6 +906,8 @@ class App:
             async with self.db_pool.acquire() as conn:
                 await conn.execute("CREATE INDEX IF NOT EXISTS stxo_s_pointer "
                                    "ON stxo USING BTREE (s_pointer);")
+                await conn.execute("CREATE INDEX IF NOT EXISTS transaction_map_address "
+                                   "ON transaction_map USING HASH (address, pointer);")
 
     async def create_address_utxo_index(self):
         async with self.db_pool.acquire() as conn:

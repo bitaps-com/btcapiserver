@@ -104,7 +104,7 @@ async def create_db_model(app, conn):
                            INSERT INTO service (name, value) VALUES ('transaction_history', '1')  
                            ON CONFLICT(name) DO NOTHING;
                            """)
-        app.transaction_map_start_block = await conn.fetchval("SELECT pointer FROM transaction_map "
+        app.transaction_map_start_block = await conn.fetchval("SELECT pointer FROM stxo "
                                                               "ORDER BY pointer DESC LIMIT 1;")
         if app.transaction_map_start_block is None:
             app.transaction_map_start_block = 0

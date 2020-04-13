@@ -5,23 +5,19 @@ CREATE TABLE IF NOT EXISTS stxo (pointer BIGINT NOT NULL PRIMARY KEY,
 
 
 
-CREATE TABLE IF NOT EXISTS transaction_map (address BYTEA NOT NULL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS transaction_map (address BYTEA NOT NULL,
                                             pointer BIGINT,
                                             amount BIGINT);
 
 
-CREATE TABLE IF NOT EXISTS unconfirmed_transaction_map (tx_id BYTEA PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS unconfirmed_transaction_map (tx_id BYTEA,
                                                         address BYTEA NOT NULL,
-                                                        amount BIGINT);
+                                                        amount BIGINT,
+                                                        PRIMARY KEY(address, tx_id));
 
 CREATE TABLE IF NOT EXISTS invalid_transaction_map (tx_id BYTEA,
-                                                    pointer BIGINT,
                                                     address BYTEA NOT NULL,
                                                     amount BIGINT,
-                                                    PRIMARY KEY (tx_id, pointer));
+                                                    PRIMARY KEY(address, tx_id));
 
 
-
-
-CREATE INDEX IF NOT EXISTS utxmap_address_map_amount ON unconfirmed_transaction_map USING BTREE (address, pointer);
-CREATE INDEX IF NOT EXISTS itxmap_address_map_amount ON invalid_transaction_map USING BTREE (address, pointer);
