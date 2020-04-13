@@ -1,9 +1,11 @@
+#!/bin/sh
+parentdir="$(dirname "$(pwd)")"
 docker container stop btcapi-engine
 docker container rm btcapi-engine
-docker build -t btcapi-engine .
 docker run --rm \
            --name btcapi-engine \
-           -v /home/ubuntu/btcapiserver/config:/config/ \
-           -v /home/ubuntu/btcapiserver/data/socket/:/var/run/postgresql/ \
+           -v $parentdir/config:/config/ \
+           -v $parentdir/data/socket/:/var/run/postgresql/ \
+           -v $parentdir/app/:/app/ \
            --net=host \
            -it btcapi-engine
