@@ -362,7 +362,7 @@ async def get_block_utxo(request):
         if page <= 0: raise Exception()
     except: page = 1
 
-    try: order = "asc" if parameters["order"] == "desc" else "desc"
+    try: order = "asc" if parameters["order"] == "asc" else "desc"
     except: order = "asc"
 
     try:
@@ -435,7 +435,7 @@ async def get_block_transactions(request):
         limit = 50
         page = 1
 
-    try: order = "asc" if parameters["order"] == "desc" else "desc"
+    try: order = "asc" if parameters["order"] == "asc" else "desc"
     except: order = "asc"
 
     try:
@@ -500,7 +500,7 @@ async def get_block_transactions_list(request):
             page = 1
 
         try:
-            order = "asc" if parameters["order"] == "desc" else "desc"
+            order = "asc" if parameters["order"] == "asc" else "desc"
         except:
             order = "asc"
 
@@ -786,6 +786,246 @@ async def get_transaction_by_pointer_list(request):
         return web.json_response(response, dumps=json.dumps, status = status)
 
 
+async def get_mempool_transactions(request):
+    log = request.app["log"]
+    log.info("POST %s" % str(request.rel_url))
+    pointers = list()
+    hashes = list()
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+
+    parameters = request.rel_url.query
+
+    try:
+        limit = int(parameters["limit"])
+        if  not (limit > 0 and limit <= 50):
+            limit = 50
+    except:
+        limit = 50
+
+    try:
+        from_timestamp = int(parameters["from_timestamp"])
+    except:
+        from_timestamp = 0
+
+
+    try:
+        page = int(parameters["page"])
+        if page <= 0: raise Exception()
+    except: page = 1
+
+    try:
+        order = "asc" if parameters["order"] == "asc" else "desc"
+    except:
+        order = "desc"
+
+
+
+
+    try:
+        response = await mempool_transactions(limit, page, order, from_timestamp, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status=status)
+
+async def get_invalid_transactions(request):
+    log = request.app["log"]
+    log.info("POST %s" % str(request.rel_url))
+    pointers = list()
+    hashes = list()
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+
+    parameters = request.rel_url.query
+
+    try:
+        limit = int(parameters["limit"])
+        if  not (limit > 0 and limit <= 50):
+            limit = 50
+    except:
+        limit = 50
+
+    try:
+        from_timestamp = int(parameters["from_timestamp"])
+    except:
+        from_timestamp = 0
+
+
+    try:
+        page = int(parameters["page"])
+        if page <= 0: raise Exception()
+    except: page = 1
+
+    try:
+        order = "asc" if parameters["order"] == "asc" else "desc"
+    except:
+        order = "desc"
+
+
+
+
+    try:
+        response = await invalid_transactions(limit, page, order, from_timestamp, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status=status)
+
+
+async def get_mempool_doublespend(request):
+    log = request.app["log"]
+    log.info("POST %s" % str(request.rel_url))
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+
+    parameters = request.rel_url.query
+
+    try:
+        limit = int(parameters["limit"])
+        if  not (limit > 0 and limit <= 50):
+            limit = 50
+    except:
+        limit = 50
+
+    try:
+        from_timestamp = int(parameters["from_timestamp"])
+    except:
+        from_timestamp = 0
+
+
+    try:
+        page = int(parameters["page"])
+        if page <= 0: raise Exception()
+    except: page = 1
+
+    try:
+        order = "asc" if parameters["order"] == "asc" else "desc"
+    except:
+        order = "desc"
+
+    try:
+        response = await mempool_doublespend(limit, page, order, from_timestamp, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status=status)
+
+async def get_mempool_doublespend_childs(request):
+    log = request.app["log"]
+    log.info("POST %s" % str(request.rel_url))
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+
+    parameters = request.rel_url.query
+
+    try:
+        limit = int(parameters["limit"])
+        if  not (limit > 0 and limit <= 50):
+            limit = 50
+    except:
+        limit = 50
+
+    try:
+        from_timestamp = int(parameters["from_timestamp"])
+    except:
+        from_timestamp = 0
+
+
+    try:
+        page = int(parameters["page"])
+        if page <= 0: raise Exception()
+    except: page = 1
+
+    try:
+        order = "asc" if parameters["order"] == "asc" else "desc"
+    except:
+        order = "desc"
+
+    try:
+        response = await mempool_doublespend_childs(limit, page, order, from_timestamp, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status=status)
+
+
+
+async def get_mempool_state(request):
+    log = request.app["log"]
+    log.info("GET %s" % str(request.rel_url))
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+
+    try:
+        response = await mempool_state(request.app)
+        status = 200
+
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status=status)
+
+
 async def get_transaction_hash_by_pointer(request):
     log = request.app["log"]
     log.info("GET %s" % str(request.rel_url))
@@ -1032,6 +1272,36 @@ async def get_address_transactions(request):
         pass
 
     try:
+        limit = int(parameters["limit"])
+        if  not (limit > 0 and limit <= 50):
+            limit = 50
+    except:
+        limit = 50
+
+    try:
+        from_block = int(parameters["from_block"])
+        if from_block > 2 ** 25:
+            from_block = 0
+    except:
+        from_block = 0
+
+
+    try:
+        page = int(parameters["page"])
+        if page <= 0: raise Exception()
+    except: page = 1
+
+    try:
+        order = "asc" if parameters["order"] == "asc" else "desc"
+    except:
+        order = "desc"
+
+    try:
+        mode = "verbose" if parameters["mode"] == "verbose" else "brief"
+    except:
+        mode = "brief"
+
+    try:
         if addr_type in (0, 1, 5, 6):
             address_net = address_net_type(address)
             if address_net == "testnet" and not request.app["testnet"]:
@@ -1048,7 +1318,85 @@ async def get_address_transactions(request):
             except:
                 raise APIException(PARAMETER_ERROR, "invalid address")
 
-        response = await address_transactions(address, type, request.app)
+        response = await address_transactions(address, type, limit, page, order, mode, from_block, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details
+                    }
+    except Exception as err:
+        if request.app["debug"]: log.error(str(traceback.format_exc()))
+        else: log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+
+async def get_address_unconfirmed_transactions(request):
+    log = request.app["log"]
+    address = request.match_info['address']
+    addr_type = address_type(address, num=True)
+    log.info("GET %s" % str(request.rel_url))
+
+
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+
+    parameters = request.rel_url.query
+
+    try:
+        type = None
+        if parameters["type"] == "P2PKH":
+            type = 0
+        if parameters["type"] == "PUBKEY":
+            type = 2
+    except:
+        pass
+
+    try:
+        limit = int(parameters["limit"])
+        if  not (limit > 0 and limit <= 50):
+            limit = 50
+    except:
+        limit = 50
+
+
+    try:
+        page = int(parameters["page"])
+        if page <= 0: raise Exception()
+    except: page = 1
+
+    try:
+        order = "asc" if parameters["order"] == "asc" else "desc"
+    except:
+        order = "desc"
+
+    try:
+        mode = "verbose" if parameters["mode"] == "verbose" else "brief"
+    except:
+        mode = "brief"
+
+    try:
+        if addr_type in (0, 1, 5, 6):
+            address_net = address_net_type(address)
+            if address_net == "testnet" and not request.app["testnet"]:
+                raise APIException(PARAMETER_ERROR, "testnet address is invalid for mainnet")
+            if address_net == "mainnet" and request.app["testnet"]:
+                raise APIException(PARAMETER_ERROR, "mainnet address is invalid for testnet")
+            try:
+                address = b"".join((bytes([addr_type]), address_to_hash(address, hex=False)))
+            except:
+                raise APIException(PARAMETER_ERROR, "invalid address")
+        else:
+            try:
+                address = bytes_needed(address)
+            except:
+                raise APIException(PARAMETER_ERROR, "invalid address")
+
+        response = await address_unconfirmed_transactions(address, type, limit, page, order, mode, request.app)
         status = 200
     except APIException as err:
         status = err.status
@@ -1328,7 +1676,7 @@ async def get_address_confirmed_utxo(request):
         from_block = 0
 
     try:
-        order = "asc" if parameters["order"] == "desc" else "desc"
+        order = "asc" if parameters["order"] == "asc" else "desc"
     except:
         order = "asc"
 
@@ -1405,7 +1753,7 @@ async def get_address_unconfirmed_utxo(request):
         pass
 
     try:
-        order = "asc" if parameters["order"] == "desc" else "desc"
+        order = "asc" if parameters["order"] == "asc" else "desc"
     except:
         order = "asc"
 

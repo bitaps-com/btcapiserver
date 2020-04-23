@@ -90,12 +90,12 @@ def test_get_address_utxo(conf):
     d_1 = r.json()["data"]
     assert len(d_1) > 10
 
-    r = requests.get(conf["base_url"] + "/rest/address/utxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?limit=1&order=asc")
+    r = requests.get(conf["base_url"] + "/rest/address/utxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?limit=1&order=desc")
     assert r.status_code == 200
     d_1 = r.json()["data"]
     assert d_1[0]["block"] >= 624897
 
-    r = requests.get(conf["base_url"] + "/rest/address/utxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?limit=1&order=desc")
+    r = requests.get(conf["base_url"] + "/rest/address/utxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?limit=1&order=asc")
     assert r.status_code == 200
     d_1 = r.json()["data"]
     assert d_1[0]["block"] == 0
@@ -117,19 +117,19 @@ def test_get_address_utxo(conf):
     assert d_1[0]["amount"] == 1
 
     r = requests.get(conf["base_url"] + "/rest/address/utxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?"
-                                        "order_by_amount=1&order=asc")
+                                        "order_by_amount=1&order=dsc")
     assert r.status_code == 200
     d_1 = r.json()["data"]
     assert d_1[0]["amount"] == 5000000000
 
     r = requests.get(conf["base_url"] + "/rest/address/utxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?"
-                                        "type=PUBKEY&order_by_amount=1&order=asc")
+                                        "type=PUBKEY&order_by_amount=1&order=dsc")
     assert r.status_code == 200
     d_1 = r.json()["data"]
     assert d_1[0]["amount"] == 5000000000
 
     r = requests.get(conf["base_url"] + "/rest/address/utxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?"
-                                        "type=P2PKH&order_by_amount=1&order=asc")
+                                        "type=P2PKH&order_by_amount=1&order=dsc")
     assert r.status_code == 200
     d_1 = r.json()["data"]
     assert d_1[0]["amount"] == 400000000
@@ -146,14 +146,14 @@ def test_get_address_utxo(conf):
     assert r.status_code == 200
 
 
+    r = requests.get(conf["base_url"] + "/rest/address/uutxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?limit=1&order=dsc")
+    assert r.status_code == 200
+
     r = requests.get(conf["base_url"] + "/rest/address/uutxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?limit=1&order=asc")
     assert r.status_code == 200
 
-    r = requests.get(conf["base_url"] + "/rest/address/uutxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?limit=1&order=desc")
-    assert r.status_code == 200
-
     r = requests.get(conf["base_url"] + "/rest/address/uutxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?"
-                                        "order_by_amount=1&order=asc")
+                                        "order_by_amount=1&order=dsc")
     assert r.status_code == 200
 
     r = requests.get(conf["base_url"] + "/rest/address/uutxo/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?"

@@ -440,7 +440,7 @@ def test_get_confirmed_transaction_by_pointer_list_extended(conf):
     r = requests.get("https://api.bitaps.com/btc/v1/mempool/transactions")
     assert r.status_code == 200
     t = r.json()["data"]["transactions"]
-    tx_list = [i["txId"] for i in t]
+    tx_list = [i["txId"] for i in t][:30]
 
 
     q = time.time()

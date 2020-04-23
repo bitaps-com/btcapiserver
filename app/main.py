@@ -16,16 +16,16 @@ from sortedcontainers import SortedSet
 import uvloop
 import gzip
 import pickle
-
 from pybtc import Connector, encode_gcs, int_to_var_int, ripemd160, double_sha256, sha256
-from pybtc import int_to_c_int, MRU, bytes_to_int
+from pybtc import Transaction, MRU, bytes_to_int
 from pybtc import map_into_range, siphash, target_to_difficulty, bits_to_target, int_to_bytes
 from pybtc import s2rh, rh2s, merkle_tree, merkle_proof, parse_script
 from struct  import  unpack
+import math
 
 import db_model
 from modules.filter_compressor import FilterCompressor
-from modules.address_state import AddressStateSync
+from modules.mempool_analytica import MempoolAnalytica
 from utils import log_level_map, deserialize_address_data, serialize_address_data
 
 
@@ -52,6 +52,7 @@ class App:
         self.address_timeline = True if config["OPTIONS"]["address_timeline"] == "on" else False
 
         self.blockchain_analytica = True if config["OPTIONS"]["blockchain_analytica"] == "on" else False
+        self.mempool_analytica = True if config["OPTIONS"]["mempool_analytica"] == "on" else False
 
 
         self.coinbase_maturity =  int(config["SYNCHRONIZATION"]["coinbase_maturity"])
@@ -62,7 +63,6 @@ class App:
         self.psql_dsn = config["POSTGRESQL"]["dsn"]
         self.psql_threads = int(config["POSTGRESQL"]["server_threads"])
         self.chain_tail = []
-        self.block_map_timestamp = dict()
         self.shutdown = False
         self.force_shutdown = False
         self.executor = ThreadPoolExecutor(max_workers=5)
@@ -127,6 +127,8 @@ class App:
             async with self.db_pool.acquire() as conn:
                 async with conn.transaction():
                     await db_model.create_db_model(self, conn)
+
+
             self.log.info("Connecting to bitcoind daemon ...")
 
             self.connector =  Connector(config["CONNECTOR"]["rpc"],
@@ -190,9 +192,12 @@ class App:
             #                                                              self.log)))
             # self.tasks.append(self.loop.create_task(self.address_state_processor()))
 
+        if self.mempool_analytica:
+            self.processes.append(Process(target=MempoolAnalytica, args=(self.psql_dsn, self.log)))
 
 
         [p.start() for p in self.processes]
+
 
 
 
@@ -223,7 +228,7 @@ class App:
                                        self.block_best_timestamp,  raw_tx))
 
                 if self.transaction_history:
-                    self.tx_map += block["txMap"]
+                    self.tx_map += deque(block["txMap"])
                     self.stxo += block["stxo"]
 
                 if self.block_filters:
@@ -332,6 +337,7 @@ class App:
                             await conn.execute("TRUNCATE TABLE unconfirmed_transaction_map;")
                         await conn.execute("UPDATE service SET value = '1' WHERE name = 'bootstrap_completed';")
                 await self.create_indexes()
+                await self.load_block_map()
                 return
             except asyncio.CancelledError:
                 return
@@ -344,14 +350,13 @@ class App:
     async def new_transaction_handler(self, tx, timestamp, conn):
         try:
             raw_tx = tx.serialize(hex=False)
-            tx_map = dict()
-            tx_map_append = tx_map.append
-
+            tx_map = set()
+            input_amounts = 0
             if self.transaction_history:
                 if not tx["coinbase"]:
                     for i in tx["vIn"]:
-                        va = tx_map.get((tx["vIn"][i]["coin"][2], tx["txId"]), 0)
-                        tx_map[(tx["vIn"][i]["coin"][2]), tx["txId"]] = va - tx["vIn"][i]["coin"][1]
+                        input_amounts += tx["vIn"][i]["coin"][1]
+                        tx_map.add((tx["vIn"][i]["coin"][2], tx["txId"]))
 
                 for i in tx["vOut"]:
                     out = tx["vOut"][i]
@@ -364,23 +369,43 @@ class App:
                     except:
                         address = b"".join((bytes([tx["vOut"][i]["nType"]]), tx["vOut"][i]["scriptPubKey"]))
 
-                    va = tx_map.get((address, tx["txId"]), 0)
-                    tx_map[(address, tx["txId"])] = va + out["value"]
+                    tx_map.add((address, tx["txId"]))
 
-                tx_map_list = deque()
-                for tq in tx_map:
-                    tx_map_list.append((tq[0], tq[1], tx_map_list[tq]))
+
 
                 await conn.copy_records_to_table('unconfirmed_transaction_map',
-                                                 columns=["tx_id", "address", "amount"], records=tx_map_list)
+                                                 columns=["address", "tx_id"], records=tx_map)
 
 
             if self.transaction:
-                await conn.execute("""INSERT INTO unconfirmed_transaction (tx_id,
-                                                                           raw_transaction,
-                                                                           timestamp)
-                                      VALUES ($1, $2, $3);
-                                    """, tx["txId"], raw_tx, int(time.time()))
+                if self.mempool_analytica:
+                    await conn.execute("""INSERT INTO unconfirmed_transaction (tx_id,
+                                                                               raw_transaction,
+                                                                               timestamp,
+                                                                               size,
+                                                                               b_size,
+                                                                               rbf,
+                                                                               segwit,
+                                                                               amount,
+                                                                               fee)
+                                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+                                        """,
+                                       tx["txId"],
+                                       raw_tx,
+                                       int(time.time()),
+                                       tx["size"],
+                                       tx["bSize"],
+                                       int(tx["rbf"]),
+                                       int(tx["segwit"]),
+                                       tx["amount"],
+                                       input_amounts - tx["amount"])
+
+                else:
+                    await conn.execute("""INSERT INTO unconfirmed_transaction (tx_id,
+                                                                               raw_transaction,
+                                                                               timestamp)
+                                          VALUES ($1, $2, $3);
+                                        """, tx["txId"], raw_tx, int(time.time()))
         except:
             print(traceback.format_exc())
             raise
@@ -394,7 +419,7 @@ class App:
 
             # rollback address table in case address table synchronized
             if self.address_state_block == data["height"]:
-                rows = await conn.fetch("SELECT pointer, address, amount FROM transaction_map "
+                rows = await conn.fetch("SELECT pointer, address FROM transaction_map "
                                         "WHERE pointer >= $1 and pointer < $2;", data["height"], data["height"] + 1)
 
                 affected, address, removed, update_records = set(), dict(), set(), list()
@@ -432,36 +457,159 @@ class App:
                                     "           timestamp;", data["height"] << 39)
             pointer_map_tx_id = dict()
             batch = []
+
             for row in rows:
                 pointer_map_tx_id[row["pointer"]] = row["tx_id"]
                 if row["tx_id"] == data["coinbase_tx_id"]: continue
-                batch.append((row["tx_id"],
-                              row["raw_transaction"],
-                              row["timestamp"]))
+                if self.mempool_analytica:
+                    t = Transaction(row["raw_transaction"], format="raw")
+                    batch.append((row["tx_id"],
+                                  row["raw_transaction"],
+                                  row["timestamp"],
+                                  t["size"],
+                                  t["b_size"],
+                                  int(t["rbf"]),
+                                  int(t["segwit"]),
+                                  t["fee"],
+                                  t["amount"]))
+
+                else:
+                    batch.append((row["tx_id"],
+                                  row["raw_transaction"],
+                                  row["timestamp"]))
+
+            if self.mempool_analytica:
+                await conn.copy_records_to_table('unconfirmed_transaction',
+                                                 columns=["tx_id", "raw_transaction", "timestamp",
+                                                          "size", "b_size", "rbf", "segwit", "fee", "amount"],
+                                                 records=batch)
+                stxo, utxo, outpoints, invalid_tx_set = deque(), deque(), set(), set()
+                utransactions = deque()
+                utransactions_map = deque()
+                for s in data["stxo"]:
+                    outpoints.add(s[0])
+
+                while outpoints:
+                    s_rows = await conn.fetch("DELETE FROM invalid_stxo WHERE outpoint = ANY($1) "
+                                              "RETURNING "
+                                              "outpoint as op,"
+                                              "sequence as s,"
+                                              "out_tx_id as otd,"
+                                              "tx_id,"
+                                              "input_index as ii,"
+                                              "address as ad,"
+                                              "amount as am,"
+                                              "pointer as p;", outpoints)
+                    tx_set = set()
+                    for r in s_rows:
+                        stxo.append((r["op"], 0, r["otd"], r["tx_id"], r["ii"], r["ad"], r["am"], r["p"]))
+                        invalid_tx_set.add(r["tx_id"])
+                        tx_set.add(r["tx_id"])
+
+                    s_rows = await conn.fetch("DELETE FROM invalid_transaction WHERE tx_id = ANY($1) "
+                                              "RETURNING "
+                                              "tx_id,"
+                                              "raw_transaction as rtx,"
+                                              "timestamp as ts,"
+                                              "size as s,"
+                                              "b_size as bs,"
+                                              "rbf,"
+                                              "fee,"
+                                              "amount as a,"
+                                              "segwit as sw;", tx_set)
+
+                    for r in s_rows:
+                        utransactions.append((r["tx_id"], r["rtx"], r["ts"], r["s"], r["bs"],
+                                              r["rbf"], r["fee"], r["a"], r["sw"]))
+                        invalid_tx_set.add(r["tx_id"])
+
+                    s_rows = await conn.fetch("DELETE FROM invalid_transaction_map WHERE tx_id = ANY($1) "
+                                              "RETURNING "
+                                              "tx_id,"
+                                              "address ;", tx_set)
+
+                    for r in s_rows:
+                        utransactions_map.append((r["tx_id"], r["address"]))
+
+                    s_rows = await conn.fetch("DELETE FROM invalid_utxo WHERE out_tx_id = ANY($1) "
+                                              "RETURNING "
+                                              "outpoint,"
+                                              "out_tx_id,"
+                                              "address,"
+                                              "amount ;", tx_set)
+                    outpoints = set()
+                    for r in s_rows:
+                        utxo.append((r["outpoint"], r["out_tx_id"], r["address"] ,r["amount"]))
+                        outpoints.add(r["outpoint"])
 
 
-            await conn.copy_records_to_table('unconfirmed_transaction',
-                                             columns=["tx_id", "raw_transaction", "timestamp"],
-                                             records=batch)
+                await conn.copy_records_to_table('unconfirmed_transaction',
+                                                 columns=["tx_id", "raw_transaction", "timestamp",
+                                                          "size", "b_size", "rbf", "fee",  "amount", "segwit" ],
+                                                 records=utransactions)
+                await conn.copy_records_to_table('unconfirmed_transaction_map',
+                                                 columns=["tx_id", "address"],
+                                                 records=utransactions_map)
+
+                await conn.copy_records_to_table('connector_unconfirmed_utxo',
+                                                 columns=["outpoint", "out_tx_id",
+                                                          "address", "amount"], records=utxo)
 
 
-        # transaction map table
-        if self.transaction_history:
-            await conn.execute("DELETE FROM stxo WHERE s_pointer >= $1;",  data["height"] << 39)
+                stxo = set(stxo)
+                while stxo:
+                    rows = await conn.fetch("INSERT  INTO connector_unconfirmed_stxo "
+                                            "(outpoint, sequence, out_tx_id, tx_id, input_index, address, amount, pointer) "
+                                            " (SELECT r.outpoint,"
+                                            "         r.sequence,"
+                                            "         r.out_tx_id,"
+                                            "         r.tx_id,"
+                                            "         r.input_index, "
+                                            "         r.address, "
+                                            "         r.amount, "
+                                            "         r.pointer "
+                                            "FROM unnest($1::invalid_stxo[]) as r ) "
+                                            "ON CONFLICT (outpoint, sequence) DO NOTHING "
+                                            "            RETURNING outpoint as o,"
+                                            "                      sequence as s,"
+                                            "                      out_tx_id as ot,"
+                                            "                      tx_id as t,"
+                                            "                      input_index as i,"
+                                            "                      address as a,"
+                                            "                      amount as am, "
+                                            "                      pointer as pt;", stxo)
 
-            rows = await conn.fetch("DELETE FROM transaction_map WHERE pointer >= $1 " 
-                                    "RETURNING  pointer, address, amount;",  data["height"] << 39)
+                    for row in rows:
+                        stxo.remove((row["o"], row["s"], row["ot"], row["t"], row["i"], row["a"], row["am"], row["pt"]))
 
-            batch = []
-            for row in rows:
-                tx_id = pointer_map_tx_id[row["pointer"]]
-                if tx_id == data["coinbase_tx_id"]:
-                    continue
-                batch.append((tx_id, row["address"], row["amount"]))
+                    # in case double spend increment sequence
+                    stxo = set((i[0], i[1] + 1, i[2], i[3], i[4], i[5], i[6], i[7]) for i in stxo)
 
-            await conn.copy_records_to_table('unconfirmed_transaction_map',
-                                             columns=["tx_id", "address", "amount"],
-                                             records=batch)
+
+
+            else:
+                await conn.copy_records_to_table('unconfirmed_transaction',
+                                                 columns=["tx_id", "raw_transaction", "timestamp"],
+                                                 records=batch)
+
+
+            # transaction map table
+            if self.transaction_history:
+                await conn.execute("DELETE FROM stxo WHERE s_pointer >= $1;",  data["height"] << 39)
+
+                rows = await conn.fetch("DELETE FROM transaction_map WHERE pointer >= $1 " 
+                                        "RETURNING  pointer, address;",  data["height"] << 39)
+
+                batch = []
+                for row in rows:
+                    tx_id = pointer_map_tx_id[row["pointer"]]
+                    if tx_id == data["coinbase_tx_id"]:
+                        continue
+                    batch.append((tx_id, row["address"]))
+
+                await conn.copy_records_to_table('unconfirmed_transaction_map',
+                                                 columns=["tx_id", "address"],
+                                                 records=batch)
 
         # blocks table
 
@@ -477,6 +625,8 @@ class App:
 
     async def new_block_handler(self, block, conn):
         try:
+            if block["miner"] is not None:
+                self.log.info("Mined by %s" % json.loads(block["miner"])["name"])
             hash_list = [s2rh(t) for t in block["tx"]]
             if self.transaction:
                 if self.merkle_proof:
@@ -484,10 +634,12 @@ class App:
                     transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction",  "merkle_proof"]
                 else:
                     transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction"]
-
+                qt2 = time.time()
                 # unconfirmed_transaction table
                 rows = await conn.fetch("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1) "
                                         "RETURNING  tx_id, raw_transaction, timestamp;", hash_list)
+                dutx = round(time.time() - qt2, 2)
+
                 batch = []
                 for row in rows:
                     index = block["tx"].index(rh2s(row["tx_id"]))
@@ -502,38 +654,138 @@ class App:
                                       row["tx_id"],
                                       row["timestamp"],
                                       row["raw_transaction"]))
+                qt2 = time.time()
                 await conn.copy_records_to_table('transaction', columns=transaction_columns, records=batch)
+                ctx =  round(time.time() - qt2, 2)
+                self.log.debug("    Delete from unconfirmed_transaction %s; Copy to transaction %s;" % (dutx, ctx))
+
 
                 # invalid_transaction table
                 if block["mempoolInvalid"]["tx"]:
-                    await conn.execute("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1);",
-                                        block["mempoolInvalid"]["tx"])
+                    qt = time.time()
+                    if self.mempool_analytica:
+                        qt2 = time.time()
+                        d_rows = await conn.fetch("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1) "
+                                           "RETURNING "
+                                           "tx_id, raw_transaction, timestamp,"
+                                           "size, b_size, rbf, fee, feerate, amount, segwit;",
+                                            block["mempoolInvalid"]["tx"])
+                        diutx = round(time.time() - qt2, 2)
+                        d_records = deque()
+                        for d in d_rows:
+                            d_records.append((d["tx_id"], d["raw_transaction"],
+                                              d["timestamp"], d["size"],
+                                              d["b_size"], d["rbf"], d["fee"],
+                                              d["feerate"], d["amount"], d["segwit"]))
+                        qt2 = time.time()
+                        await conn.copy_records_to_table('invalid_transaction',
+                                                         columns=["tx_id", "raw_transaction",
+                                                                  "timestamp", "size", "b_size",
+                                                                  "rbf", "fee", "feerate",
+                                                                  "amount", "segwit"],
+                                                         records=d_records)
+                        ciutx = round(time.time() - qt2, 2)
+                        qt2 = time.time()
+                        await conn.copy_records_to_table('invalid_utxo',
+                                                         columns=["outpoint", "out_tx_id",
+                                                                  "address", "amount"],
+                                                         records=block["mempoolInvalid"]["outputs"])
+                        ciutxo = round(time.time() - qt2, 2)
+
+                        istxo = set(block["mempoolInvalid"]["inputs"])
+                        l = len(istxo)
+                        c = 0
+                        qt2 = time.time()
+                        while istxo:
+                            rows = await conn.fetch("INSERT  INTO invalid_stxo "
+                                                    "(outpoint, sequence, out_tx_id, tx_id, input_index, address, amount, pointer) "
+                                                    " (SELECT r.outpoint,"
+                                                    "         r.sequence,"
+                                                    "         r.out_tx_id,"
+                                                    "         r.tx_id,"
+                                                    "         r.input_index, "
+                                                    "         r.address, "
+                                                    "         r.amount, "
+                                                    "         r.pointer "
+                                                    "FROM unnest($1::invalid_stxo[]) as r ) "
+                                                    "ON CONFLICT (outpoint, sequence) DO NOTHING "
+                                                    "            RETURNING outpoint as o,"
+                                                    "                      sequence as s,"
+                                                    "                      out_tx_id as ot,"
+                                                    "                      tx_id as t,"
+                                                    "                      input_index as i,"
+                                                    "                      address as a,"
+                                                    "                      amount as am, "
+                                                    "                      pointer as pt;", istxo)
+
+                            for row in rows:
+                                c += 1
+                                istxo.remove((row["o"], row["s"], row["ot"], row["t"],
+                                              row["i"], row["a"], row["am"], row["pt"]))
+
+                            # in case double spend increment sequence
+                            istxo = set((i[0], i[1] + 1, i[2], i[3], i[4], i[5], i[6], i[7]) for i in istxo)
+                        assert c == l
+                        iistxo = round(time.time() - qt2, 2)
+                    else:
+                        await conn.execute("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1);",
+                                            block["mempoolInvalid"]["tx"])
+                    self.log.debug("    Delete invalid from unconfirmed_transaction %s;"
+                                   "Copy to invalid_transaction %s;" % (diutx, ciutx))
+
+                    self.log.debug("    Copy to invalid utxo %s;"
+                                   "Insert into invalid_stxo %s;" % (ciutxo, iistxo))
+
 
             if self.transaction_history:
                 # invalid_transaction_map
                 if block["mempoolInvalid"]["tx"]:
-                    await conn.execute("DELETE FROM unconfirmed_transaction_map WHERE tx_id = ANY($1); ",
-                                        block["mempoolInvalid"]["tx"])
+                    if self.mempool_analytica:
+                        qt2 = time.time()
+                        d_rows = await conn.fetch("DELETE FROM unconfirmed_transaction_map WHERE tx_id = ANY($1) "
+                                                "RETURNING tx_id, address; ",
+                                            block["mempoolInvalid"]["tx"])
+                        ditxm = round(time.time() - qt2, 2)
+                        d_records = deque()
+                        for d in d_rows:
+                            d_records.append((d["tx_id"], d["address"]))
+                        qt = time.time()
+                        await conn.copy_records_to_table('invalid_transaction_map',
+                                                         columns=["tx_id", "address"], records=d_records)
+                        citxm = round(time.time() - qt2, 2)
+                        self.log.debug("    Delete invalid unconfirmed_transaction_map %s;"
+                                       "Copy to invalid_transaction_map %s;" % (ditxm, citxm))
+                    else:
+                        await conn.execute("DELETE FROM unconfirmed_transaction_map WHERE tx_id = ANY($1);",
+                                           block["mempoolInvalid"]["tx"])
 
+                qt2 = time.time()
                 # unconfirmed_transaction_map
                 rows = await conn.fetch("DELETE FROM unconfirmed_transaction_map WHERE tx_id = ANY($1) "
-                                        "RETURNING  tx_id, address, amount;", hash_list)
+                                        "RETURNING  tx_id, address;", hash_list)
+                dutxm = round(time.time() - qt2, 2)
+
                 utxo_batch = []
 
                 for row in rows:
                     index = block["tx"].index(rh2s(row["tx_id"]))
                     pointer = (block["height"] << 39) + (index << 20)
-                    utxo_batch.append((row["address"], pointer, row["amount"]))
+                    utxo_batch.append((row["address"], pointer))
+                qt2 = time.time()
 
-                await conn.copy_records_to_table('transaction_map', columns=["address", "pointer", "amount"],
+                await conn.copy_records_to_table('transaction_map', columns=["address", "pointer"],
                                                  records=utxo_batch)
+                cutxm = round(time.time() - qt2, 2)
 
                 # create stxo records
                 tx_map_pointer = dict()
                 for s in block["stxo"]:
                     tx_map_pointer[s[2]] = None
+                qt2 = time.time()
                 rows = await conn.fetch("SELECT pointer, tx_id  FROM transaction WHERE tx_id = ANY($1) ",
                                         tx_map_pointer.keys())
+                sptr = round(time.time() - qt2, 2)
+
                 for row in rows:
                     tx_map_pointer[row["tx_id"]] = row["pointer"]
                 assert len(rows) == len(tx_map_pointer)
@@ -544,10 +796,14 @@ class App:
                     pointer = tx_map_pointer[s[2]]+(1<<19)+bytes_to_int(s[0][32:])
                     stxo.append((pointer, s_pointer, s[5], s[6]))
                     # print((pointer, s_pointer))
-
+                qt2 = time.time()
                 await conn.copy_records_to_table('stxo', columns=["pointer", "s_pointer", "address", "amount"],
                                                  records=stxo)
-
+                cstxo = round(time.time() - qt2, 2)
+                self.log.debug("    Delete from unconfirmed_transaction_map %s;"
+                               "Copy to transaction_map %s;"
+                               "Select pointers %s;"
+                               "Insert into stxo %s;" % (dutxm, cutxm, sptr, cstxo))
 
             # block filters
             if self.block_filters:
@@ -685,6 +941,7 @@ class App:
 
             if self.block_best_timestamp < block["time"]:  self.block_best_timestamp = block["time"]
 
+
             if self.blocks_data:
                 miner = block["miner"]
                 target = bits_to_target(unpack("<L", s2rh(block["bits"]))[0])
@@ -726,6 +983,22 @@ class App:
             raise
         # await asyncio.sleep(10)
         # assert 0
+
+
+    async def mempool_analytica_processor(self):
+        while True:
+            try:
+               pass
+
+
+            except asyncio.CancelledError:
+                self.log.warning("Mempool analytica processor stopped")
+                break
+            except:
+                print(traceback.format_exc())
+
+            await asyncio.sleep(5)
+
 
 
 
@@ -859,7 +1132,7 @@ class App:
                             batch = self.tx_map_batches.delete(height)
 
                             await conn.copy_records_to_table('transaction_map',
-                                                             columns=["address", "pointer", "amount"],
+                                                             columns=["address", "pointer"],
                                                              records=batch)
 
                         if height in self.stxo_batches:
@@ -906,8 +1179,11 @@ class App:
             async with self.db_pool.acquire() as conn:
                 await conn.execute("CREATE INDEX IF NOT EXISTS stxo_s_pointer "
                                    "ON stxo USING BTREE (s_pointer);")
+                await conn.execute("CREATE INDEX IF NOT EXISTS stxo_s_address "
+                                   "ON stxo USING BTREE (address, s_pointer);")
+
                 await conn.execute("CREATE INDEX IF NOT EXISTS transaction_map_address "
-                                   "ON transaction_map USING HASH (address, pointer);")
+                                   "ON transaction_map USING BTREE (address, pointer);")
 
     async def create_address_utxo_index(self):
         async with self.db_pool.acquire() as conn:
@@ -922,7 +1198,6 @@ class App:
         async with self.db_pool.acquire() as conn:
             await conn.execute("CREATE INDEX IF NOT EXISTS blocks_hash "
                                "ON blocks USING BTREE (hash);")
-
 
 
     def _exc(self, a, b, c):
@@ -1017,6 +1292,7 @@ if __name__ == '__main__':
         config["OPTIONS"]["address_timeline"]
         config["OPTIONS"]["blockchain_analytica"]
         config["OPTIONS"]["transaction_history"]
+        config["OPTIONS"]["mempool_analytica"]
 
 
 
@@ -1043,7 +1319,7 @@ if __name__ == '__main__':
         logger.critical("Shutdown")
         logger.critical(str(traceback.format_exc()))
         sys.exit(0)
-    connector_log_level = logging.DEBUG
+    connector_log_level = logging.INFO
     logger.setLevel(log_level)
     logger_connector.setLevel(connector_log_level)
     loop = asyncio.get_event_loop()

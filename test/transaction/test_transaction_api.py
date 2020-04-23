@@ -2,7 +2,7 @@ import requests
 from pybtc import *
 
 
-def test_get_transaction(conf):
+def test_get_transaction_simple(conf):
     if not conf["option_transaction"]:
         return
 

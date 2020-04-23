@@ -52,6 +52,7 @@ app["address_state"] = True if config["OPTIONS"]["address_state"] == "on" else F
 app["address_timeline"] = True if config["OPTIONS"]["address_timeline"] == "on" else False
 app["blocks_data"] = True if config["OPTIONS"]["blocks_data"] == "on" else False
 app["blockchain_analytica"] = True if config["OPTIONS"]["blockchain_analytica"] == "on" else False
+app["mempool_analytica"] = True if config["OPTIONS"]["mempool_analytica"] == "on" else False
 app["transaction_history"] = True if config["OPTIONS"]["transaction_history"] == "on" else False
 
 app["block_filters"] = True if config["OPTIONS"]["block_filters"] == "on" else False

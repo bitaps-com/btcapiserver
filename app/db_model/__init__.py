@@ -45,6 +45,27 @@ async def create_db_model(app, conn):
         app.log.critical("transaction option not match db structure; you should drop db and recreate it")
         raise Exception("DB structure invalid")
 
+    # mempool_analytica
+
+    if app.mempool_analytica:
+        if not app.transaction:
+            app.log.critical("transaction mempool_analytica required transaction option enabled")
+            raise Exception("configuration invalid")
+
+        await conn.execute(open("./db_model/sql/mempool_analytica.sql",
+                                "r", encoding='utf-8').read().replace("\n", ""))
+        await conn.execute("INSERT INTO service (name,value) VALUES ('mempool_analytica','1') "
+                           "ON CONFLICT(name) DO NOTHING;")
+    else:
+        await conn.execute("INSERT INTO service (name,value) VALUES ('mempool_analytica','0') "
+                           "ON CONFLICT(name) DO NOTHING;")
+    m = await conn.fetchval("SELECT value FROM service WHERE name ='mempool_analytica' LIMIT 1;")
+    app.log.info("Option mempool_analytica = %s" % m)
+
+    if bool(int(m)) !=  app.mempool_analytica:
+        app.log.critical("mempool_analytica option not match db structure; you should drop db and recreate it")
+        raise Exception("DB structure invalid")
+
 
     # merkle proof module
 
@@ -350,9 +371,9 @@ async def create_db_model(app, conn):
 
 
 
-    # mempool_analytica
 
-    app.log.info("Option mempool_analytica = 0")
+
+
 
     # transaction_fee_analytica
 

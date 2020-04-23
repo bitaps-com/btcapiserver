@@ -27,6 +27,11 @@ def setup_routes(app):
     if app["transaction_history"]:
         app.router.add_route('GET', '/rest/address/state/{address}', get_address_state_extended)
         app.router.add_route('GET', '/rest/address/transactions/{address}', get_address_transactions)
+        app.router.add_route('GET', '/rest/address/unconfirmed/transactions/{address}',
+                             get_address_unconfirmed_transactions)
+        app.router.add_route('GET', '/rest/mempool/transactions', get_mempool_transactions)
+        if app["mempool_analytica"]:
+            app.router.add_route('GET', '/rest/invalid/transactions', get_invalid_transactions)
     else:
         app.router.add_route('GET', '/rest/address/state/{address}', get_address_state)
     app.router.add_route('POST', '/rest/addresses/state/by/address/list', get_address_state_by_list)
@@ -55,6 +60,7 @@ def setup_routes(app):
         app.router.add_route('POST', '/rest/transactions/hash/by/blockchain/pointer/list',
                              get_transaction_hash_by_pointers)
 
+
         if app["merkle_proof"]:
             app.router.add_route('GET', '/rest/transaction/merkle_proof/{tx_pointer}', get_transaction_merkle_proof)
         else:
@@ -63,6 +69,12 @@ def setup_routes(app):
 
         app.router.add_route('GET', '/rest/transaction/calculate/merkle_proof/{tx_pointer}',
                              calculate_transaction_merkle_proof)
+
+    if app["mempool_analytica"]:
+        app.router.add_route('GET', '/rest/mempool/state', get_mempool_state)
+        app.router.add_route('GET', '/rest/mempool/doublespend', get_mempool_doublespend)
+        app.router.add_route('GET', '/rest/mempool/doublespend/childs', get_mempool_doublespend_childs)
+
 
 
     if app["block_filters"]:
