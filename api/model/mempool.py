@@ -51,6 +51,10 @@ async def invalid_transactions(limit, page, order, from_timestamp, app):
     tx_list = []
     tx_set = set()
     last_dep = dict()
+
+    dep_chain = dict()
+    conflict_outpoints_chain = dict()
+
     list_map = dict()
     for row in rows:
         tx = Transaction(row["raw_transaction"], testnet=app["testnet"])
@@ -64,12 +68,13 @@ async def invalid_transactions(limit, page, order, from_timestamp, app):
             del tx["flag"]
         tx_list.append(tx)
 
-        list_map[row["tx_id"]] = set()
+        conflict_outpoint = deque()
         for q in tx["vIn"]:
             tx_set.add(s2rh(tx["vIn"][q]["txId"]))
-            last_dep[s2rh(tx["vIn"][q]["txId"])] =  tx["vIn"][q]["vOut"]
-            list_map[row["tx_id"]].add(tx["vIn"][q]["txId"])
-
+            op = b"%s%s" % (s2rh(tx["vIn"][q]["txId"]), int_to_bytes(tx["vIn"][q]["vOut"]))
+            conflict_outpoint.append(op)
+        dep_chain[tx["txId"]] = [[tx["txId"]]]
+        conflict_outpoints_chain[tx["txId"]] = [conflict_outpoint]
 
     # find out mainnet competitiors and invalid chains
 

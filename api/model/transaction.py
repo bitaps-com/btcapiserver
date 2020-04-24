@@ -261,7 +261,6 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
         if app["merkle_proof"]:
             tx["merkleProof"] = base64.b64encode(row["merkle_proof"]).decode()
 
-
     del tx["format"]
     del tx["testnet"]
     if not app["transaction_history"]:

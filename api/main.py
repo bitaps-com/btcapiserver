@@ -31,11 +31,6 @@ try:
 except:
     pass
 
-try:
-    if LOG_LEVEL_MAP[config["SERVER"]["api_debug_mode"]] == "on":
-        dbg = True
-except:
-    pass
 
 logger.setLevel(log_level)
 ch = logging.StreamHandler()
@@ -43,6 +38,14 @@ ch.setLevel(log_level)
 formatter = colorlog.ColoredFormatter('%(log_color)s%(asctime)s %(levelname)s: %(message)s (%(module)s:%(lineno)d)')
 ch.setFormatter(formatter)
 logger.addHandler(ch)
+
+try:
+    if config["SERVER"]["api_debug_mode"] == "on":
+        dbg = True
+
+except:
+    pass
+
 
 app = web.Application()
 

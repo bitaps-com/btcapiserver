@@ -33,15 +33,15 @@ chapter will be added soon ...
 * **Merkle proof** store and provide cryptographic proofs of the existence of a transactions in a blocks
 * **Transaction history** store and provide historical transactions data for addresses 
 * **Address state** store and provide state of addresses
-* **Address timeline** store and provide addresses state changes over time by transaction, day and month
-* **Blockchain analytica** store and provide blockchain analytic
+* ~~**Address timeline** store and provide addresses state changes over time by transaction, day and month~~
+* ~~**Blockchain analytica** store and provide blockchain analytic~~
 * **Mempool analytica** store and provide unconfirmed transactions set analytic
 * **Transaction fee analytica** store and provide transactions fee estimation data
-* **Nodes discovery** discover and provide list of available bitcoin nodes
-* **Market data** fetch and provide markets data 
-* **Deterministic wallet** store and provide HD wallets state and historical data
-* **Payment forwarding** engine for payments forwarding service
-* **Hot wallet** engine for wallet service
+* ~~**Nodes discovery** discover and provide list of available bitcoin nodes~~
+* ~~**Market data** fetch and provide markets data~~
+* ~~**Deterministic wallet** store and provide HD wallets state and historical data~~
+* ~~**Payment forwarding** engine for payments forwarding service~~
+* ~~**Hot wallet** engine for wallet service~~
 
 
 
