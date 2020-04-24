@@ -1,13 +1,12 @@
 import asyncio
 import signal
-import traceback
 from setproctitle import setproctitle
 import asyncpg
 from collections import deque
 import time
 import json
 import math
-from pybtc import rh2s, Transaction
+from pybtc import rh2s
 
 
 class MempoolAnalytica():
@@ -26,7 +25,6 @@ class MempoolAnalytica():
         self.last_hour = 0
         self.last_day = 0
         self.bootstrap_completed = False
-
         self.loop = asyncio.get_event_loop()
         signal.signal(signal.SIGTERM, self.terminate)
         self.loop.create_task(self.start())
@@ -132,11 +130,6 @@ class MempoolAnalytica():
 
                 q = time.time()
                 await self.load_block_map()
-
-
-
-
-
 
                 async with self.db_pool.acquire() as conn:
                     async with conn.transaction():
@@ -269,49 +262,6 @@ class MempoolAnalytica():
                 transactions["count"] += len(tx)
                 dbs_records = deque()
                 dbs_childs_records = deque()
-
-
-                # print(len(txsi), len(txso), len(tx))
-                # c = 1900
-                # ppp = list()
-                # for row in txso:
-                #     # print(row)
-                #     if row not in txsi:
-                #         ppp.append(row)
-                #
-                # # print(rh2s(row), row.hex())
-                # async with self.db_pool.acquire() as conn:
-                #     # vk = await conn.fetchval("SELECT raw_transaction FROM  transaction "
-                #     #                         "WHERE tx_id = $1 LIMIT 1;", row)
-                #     # if vk is None:
-                #     #     print("NOOOO")
-                #     # else:
-                #         # print("TRUE")
-                #     # t = Transaction(vk)
-                #     # print("coinbase", t["coinbase"] )
-                #     v1 = await conn.fetchval("SELECT count(*) FROM  unconfirmed_transaction_map "
-                #                             "WHERE tx_id = ANY($1) LIMIT 1;", ppp[:2000])
-                #     # v0 = await conn.fetchval("SELECT timestamp FROM  unconfirmed_transaction "
-                #     #                         "WHERE tx_id = $1 LIMIT 1;", row)
-                #     # v = await conn.fetchval("SELECT count(*) FROM  connector_unconfirmed_utxo "
-                #     #                         "WHERE out_tx_id = $1 LIMIT 1;", row)
-                #     # q = await conn.fetchval("SELECT timestamp FROM  transaction "
-                #     #                         "WHERE tx_id = $1 LIMIT 1;", row)
-                #     # p = await conn.fetchval("SELECT pointer FROM  transaction "
-                #     #                         "WHERE tx_id = $1 LIMIT 1;", row)
-                #
-                #     # if v1:
-                #     print("v1", v1)
-                #     if v1 == 0:
-                #         print("dell", v1)
-                #         await conn.execute("DELETE FROM connector_unconfirmed_utxo WHERE out_tx_id = ANY($1)", ppp[:2000])
-                #         # await conn.execute("DELETE FROM unconfirmed_transaction_map WHERE tx_id = $1", row)
-                # # c -= 1
-                # # if not c:
-                # #     print("breal")
-                # #     break
-
-
 
                 for row in tx:
                     if tx_sequence < row["id"]:
@@ -454,8 +404,8 @@ class MempoolAnalytica():
                                     outputs["count"],
                                     transactions["doublespend"]["count"], q))
 
-                # if len(tx) != len(txsi) - 1:
-                #     assert len(tx) == len(txsi)
+
+                # assert len(tx) == len(txsi)
                 # assert len(tx) == len(txso)
 
             except asyncio.CancelledError:

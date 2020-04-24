@@ -14,10 +14,6 @@ ALTER TABLE invalid_transaction ADD COLUMN IF NOT EXISTS feeRate FLOAT;
 ALTER TABLE invalid_transaction ADD COLUMN IF NOT EXISTS amount BIGINT;
 ALTER TABLE invalid_transaction ADD COLUMN IF NOT EXISTS segwit SMALLINT;
 
-
-
-
-
 CREATE TABLE IF NOT EXISTS  mempool_analytica(minute INT4 PRIMARY KEY,
                                               hour INT4,
                                               day SMALLINT,
@@ -31,8 +27,6 @@ CREATE TABLE IF NOT EXISTS  mempool_dbs_childs(tx_id BYTEA PRIMARY KEY, timestam
 
 CREATE INDEX IF NOT EXISTS mempool_dbs_timestamp ON mempool_dbs USING hash (timestamp);
 CREATE INDEX IF NOT EXISTS mempool_dbs_childs_timestamp ON mempool_dbs_childs USING hash (timestamp);
-
-
 
 CREATE OR REPLACE FUNCTION set_fee_rate_column()
                             RETURNS TRIGGER AS $$

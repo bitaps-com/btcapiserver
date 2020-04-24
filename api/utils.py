@@ -1,9 +1,10 @@
-from binascii import hexlify
-import math
 import datetime
 import pytz
+from pybtc import hash_to_address
+from pybtc import c_int_len, c_int_to_int, int_to_c_int
+from pybtc import int_to_bytes
+from pybtc import parse_script
 from math import ceil
-from pybtc import *
 
 
 NOT_FOUND = 0
@@ -12,31 +13,13 @@ INVALID_BLOCK_POINTER = 2
 REQUEST_LIMIT_EXCEEDED = 3
 DECODE_ERROR = 4
 PARAMETER_ERROR = 5
-
-INVALID_FORWARDING_ADDRESS = 7
-INVALID_REQUEST_CODE = 5
-INVALID_TOKEN = 6
-INVALID_CONFIRMATION_TARGET = 8
 JSON_DECODE_ERROR = 9
-FORWARDING_ADDRESS_REQUIRED = 10
 INVALID_ADDRESS = 11
-INVALID_PAYMENT_CODE = 12
 INVALID_TRANSACTION_HASH = 13
 INVALID_OUTPUT = 14
-INVALID_AUTHORIZATION_CODE = 15
-REQUEST_TO_CALLBACK_FAILED = 16
-INVALID_DOMAIN_HASH = 17
-INVALID_ACCESS_TOKEN = 18
-STACK_ERROR = 19
-WALLET_PAY_FAILED = 20
-AUTHORIZATION_FAILED = 21
-NOT_ENOUGH_FUNDS = 22
-NOT_FOUND_ADDRESS = 23
 UNAVAILABLE_METHOD = 99
 
-DOMAIN_PREFIX = b'\x08T\xc8'
-
-log_level_map = {"DEBUG": 10,
+LOG_LEVEL_MAP = {"DEBUG": 10,
                  "debug": 10,
                  "INFO": 20,
                  "info": 20,
@@ -54,7 +37,7 @@ ADDRESS_TYPE_MAP = {'P2PKH': b"\x00",
                     'P2WPKH': b"\x05",
                     'P2WSH': b"\x06"}
 
-address_types = {'0': 'P2PKH',
+ADDRESS_TYPES = {'0': 'P2PKH',
                  '1': 'P2SH',
                  '2': 'PUBKEY',
                  '3': 'NULL_DATA',
@@ -66,32 +49,9 @@ address_types = {'0': 'P2PKH',
                  'null': "COINBASE"}
 
 
-tx_type_map = {b"s": "sent",
-               b"r": "received",
-               b"m": "mined",
-               b"S": "sent",
-               b"R": "received",
-               b"M": "mined",
-               b"G": "sent",
-               b"F": "received",
-               b"H": "mined"
-               }
-
-
-out_status_map = {
-    b"$": "spent",
-    b"S": "spent",
-    b"s": "spent",
-    b"D": "spent",
-    b"I": "invalid",
-    b"U": "unspent",
-    b"u": "unspent",
-}
-
 
 
 class APIException(Exception):
-
     def __init__(self, err_code, message="error", details="", status = 400):
         Exception.__init__(self)
         self.err_code = err_code
@@ -354,34 +314,3 @@ class Cache():
 
     def len(self):
         return len(self.items)
-
-def decode_block_tx(block):
-    s = get_stream(block)
-    b = dict()
-    b["amount"] = 0
-    b["size"] = int(len(block)/2)
-    b["strippedSize"] = 80
-    b["version"] = unpack("<L", s.read(4))[0]
-    b["versionHex"] = pack(">L", b["version"]).hex()
-    b["previousBlockHash"] = rh2s(s.read(32))
-    b["merkleRoot"] = rh2s(s.read(32))
-    b["time"] = unpack("<L", s.read(4))[0]
-    b["bits"] = s.read(4)
-    b["target"] = bits_to_target(unpack("<L", b["bits"])[0])
-    b["targetDifficulty"] = target_to_difficulty(b["target"])
-    b["target"] = b["target"].to_bytes(32, byteorder="little")
-    b["nonce"] = unpack("<L", s.read(4))[0]
-    s.seek(-80, 1)
-    b["header"] = s.read(80)
-    b["bits"] = rh2s(b["bits"])
-    b["target"] = rh2s(b["target"])
-    b["hash"] = double_sha256(b["header"], hex=0)
-    b["hash"] = rh2s(b["hash"])
-    b["txList"] = list()
-    b["tx"] = list()
-    for i in range(var_int_to_int(read_var_int(s))):
-        b["tx"].append(Transaction(s, format="decoded", keep_raw_tx=False))
-        b["txList"].append(b["tx"][i]["txId"])
-        b["tx"][i]["coinbase"] = False if i else True
-
-    return b
