@@ -1,7 +1,7 @@
 import asyncpg
+import asyncio
 from pybtc import *
 from utils import *
-from .blocks import last_n_blocks
 import time
 import aiojsonrpc
 from statistics import median
@@ -102,13 +102,13 @@ async def load_block_cache(app):
         await asyncio.sleep(10)
         try:
             t = time.time()
-            r = await last_n_blocks(2016, app["db_pool"], False, False)
-
-            app["log"].warning("cache blocks received  %s  %s " % (len(r["data"]),
-                                                                   time.time() - t))
-            app["last_blocks"] = list()
-            for b in r["data"][::-1]:
-                app["last_blocks"].append(b)
+            # # r = await last_n_blocks(2016, app["db_pool"], False, False)
+            #
+            # app["log"].warning("cache blocks received  %s  %s " % (len(r["data"]),
+            #                                                        time.time() - t))
+            # app["last_blocks"] = list()
+            # for b in r["data"][::-1]:
+            #     app["last_blocks"].append(b)
         except asyncio.CancelledError:
             app["log"].warning("Task load block cache stopped")
             raise

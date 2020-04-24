@@ -1,7 +1,7 @@
 from pybtc import *
 from utils import APIException
 from utils import NOT_FOUND
-from utils import block_map_update
+from .service import block_map_update
 from pybtc import rh2s, SCRIPT_N_TYPES
 import time
 import base64
