@@ -100,6 +100,29 @@ class Cache():
         else:
             return 0
 
+class ListCache():
+    def __init__(self, max_size=2000):
+        self.items = list()
+        self._max_size = max_size
+
+
+    def set(self, value):
+        self._check_limit()
+        self.items.append(value)
+
+    def _check_limit(self):
+        if len(self.items) >= self._max_size:
+            self.items.pop(0)
+
+
+    def get_last(self):
+        try:
+            return self.items[-1]
+        except:
+            return None
+
+    def len(self):
+        return len(self.items)
 
 async def get_pipe_reader(fd_reader, loop):
     reader = asyncio.StreamReader()
@@ -152,23 +175,29 @@ def seconds_to_age(time):
     return "%d:%d:%d:%d" % (day, hour, minutes, seconds)
 
 
-def chunks_by_count(l, n):
-    for i in range(0, len(l), n):
-        yield l[i:i + n]
+def format_bytes(size):
+    if size == 0:
+        return """%s bytes""" % size
+    order = int(math.log(size, 1024) // 1)
+    if order == 0:
+        return """%s bytes""" % size
+    if order == 1:
+        return """%s Kb""" %  round( size / 1024, 2)
+    if order == 2:
+        return """%s Mb""" % round(size / (1024 ** 2), 2)
+    return """%s Gb""" % round(size / (1024 ** 3), 2)
 
-
-def chunks_by_threads(l, n):
-    n = math.ceil(len(l)/n)
-    return chunks_by_count(l,n)
-
-
-def chunks(a, max_threads, min_thread_limit):
-    if not isinstance(a, list):
-        a = list(a)
-    if len(a)/min_thread_limit > max_threads:
-        return chunks_by_threads(a, max_threads)
-    else:
-        return chunks_by_count(a, min_thread_limit)
+def format_vbytes(size):
+    if size == 0:
+        return """%s vBytes""" % size
+    order = int(math.log(size, 1000) // 1)
+    if order == 0:
+        return """%s vBytes""" % size
+    if order == 1:
+        return """%s vKb""" %  round( size / 1000, 2)
+    if order == 2:
+        return """%s vMb""" % round(size / (1000 ** 2), 2)
+    return """%s vGb""" % round(size / (1000 ** 3), 2)
 
 
 def serialize_address_data(received_count, received_amount, coins,

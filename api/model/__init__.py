@@ -30,7 +30,6 @@ from .mempool import mempool_transactions
 from .mempool import mempool_state
 from .mempool import invalid_transactions
 from .mempool import mempool_doublespend
-from .mempool import mempool_doublespend_childs
 
 from .transaction import tx_by_pointer_opt_tx
 from .transaction import tx_hash_by_pointer

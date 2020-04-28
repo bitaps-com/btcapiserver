@@ -7,6 +7,7 @@ import time
 import json
 import math
 from pybtc import rh2s
+from utils import format_bytes, format_vbytes, ListCache
 
 
 class MempoolAnalytica():
@@ -86,6 +87,12 @@ class MempoolAnalytica():
                                          "txId": None},
                                  "total": 0
                                  },
+                        "vSize": {"max": {"value": None,
+                                         "txId": None},
+                                 "min": {"value": None,
+                                         "txId": None},
+                                 "total": 0
+                                 },
                         "amount": {"max": {"value": None,
                                            "txId": None},
                                    "min": {"value": None,
@@ -95,12 +102,15 @@ class MempoolAnalytica():
                         "feeRate": {"max": {"value": None,
                                             "txId": None},
                                     "min": {"value": None,
-                                            "txId": None}
+                                            "txId": None},
+                                    "best": 1,
+                                    "best4h": 1,
+                                    "bestHourly": 1
                                     },
                         "segwitCount": 0,
                         "rbfCount": 0,
-                        "doublespend": {"count": 0, "size": 0, "amount": 0},
-                        "doublespendChilds": {"count": 0, "size": 0, "amount": 0},
+                        "doublespend": {"count": 0, "size": 0, "vSize": 0, "amount": 0},
+                        "doublespendChilds": {"count": 0, "size": 0, "vSize": 0, "amount": 0},
                         "feeRateMap": {},
                         "count": 0}
         return outputs, inputs, transactions
@@ -112,6 +122,20 @@ class MempoolAnalytica():
         dbs = set()
         dbs_childs = set()
         outputs, inputs, transactions = self.refresh_stat()
+        truncate_dbs_table = True
+
+        best_fee_hourly =ListCache(60 * 60)
+        best_fee_4h =ListCache(60 * 60 * 4)
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch("SELECT minute, transactions->'feeRate'->'best' as best FROM  mempool_analytica "
+                                    "order by minute desc LIMIT 240;")
+        c = 0
+        for row in rows:
+            if row["best"] is not None:
+                if c < 60:
+                    best_fee_hourly.set(float(row["best"]))
+                best_fee_4h.set(float(row["best"]))
+            c += 1
 
         while True:
             try:
@@ -143,6 +167,7 @@ class MempoolAnalytica():
                             tx_sequence = 0
                             dbs = set()
                             dbs_childs = set()
+                            truncate_dbs_table = True
 
                         stxo = await conn.fetch("SELECT tx_id, out_tx_id, address, amount, pointer, sequence, id  "
                                                 "FROM connector_unconfirmed_stxo "
@@ -153,6 +178,10 @@ class MempoolAnalytica():
                         tx = await conn.fetch("SELECT tx_id, size, b_size, rbf, fee, "
                                               "amount, segwit, timestamp, id  FROM unconfirmed_transaction "
                                               "WHERE id > $1;", tx_sequence)
+                        best_fee = await conn.fetchval("select min(feerate)  "
+                                                    "from (select feerate, sum((size + b_size * 4)/4) "
+                                                    "over (order by feerate desc) as block "
+                                                    "from unconfirmed_transaction) t where block <= 900000;")
 
                 txsi = set()
                 txso = set()
@@ -217,10 +246,10 @@ class MempoolAnalytica():
                 l_dbs_size = 0
                 while True:
                     for row in stxo:
-                        if row["out_tx_id"] in dbs:
-                            dbs_childs.add(row["tx_id"])
-                        if row["out_tx_id"] in dbs_childs:
-                            dbs_childs.add(row["tx_id"])
+                        if row["out_tx_id"] in dbs or row["out_tx_id"] in dbs_childs:
+                            if row["tx_id"] not in dbs:
+                                dbs_childs.add(row["tx_id"])
+
                     if l_dbs_size != len(dbs_childs):
                         l_dbs_size = len(dbs_childs)
                     else:
@@ -261,19 +290,22 @@ class MempoolAnalytica():
                 transactions["doublespendChilds"]["count"] = len(dbs_childs)
                 transactions["count"] += len(tx)
                 dbs_records = deque()
-                dbs_childs_records = deque()
+
 
                 for row in tx:
+                    v_size = math.ceil((row["b_size"] * 3 + row["size"]) / 4)
                     if tx_sequence < row["id"]:
                         tx_sequence = row["id"]
                     if row["tx_id"] in dbs:
                         transactions["doublespend"]["amount"] += row["amount"]
                         transactions["doublespend"]["size"] += row["size"]
-                        dbs_records.append((row["tx_id"], row["timestamp"]))
+                        transactions["doublespend"]["vSize"] += v_size
+                        dbs_records.append((row["tx_id"], row["timestamp"], 0))
                     if row["tx_id"] in dbs_childs:
                         transactions["doublespendChilds"]["amount"] += row["amount"]
                         transactions["doublespendChilds"]["size"] += row["size"]
-                        dbs_childs_records.append((row["tx_id"], row["timestamp"]))
+                        transactions["doublespendChilds"]["vSize"] += v_size
+                        dbs_records.append((row["tx_id"], row["timestamp"], 1))
 
                     if row["amount"] > 0:
                         transactions["amount"]["total"] += row["amount"]
@@ -298,7 +330,7 @@ class MempoolAnalytica():
                                 transactions["fee"]["min"]["value"] > row["fee"]:
                             transactions["fee"]["min"]["value"] = row["fee"]
                             transactions["fee"]["min"]["txId"] = rh2s(row["tx_id"])
-                        v_size = math.ceil((row["b_size"] * 3 + row["size"]) / 4)
+
 
                         fee_rate =  math.ceil(row["fee"] / v_size)
 
@@ -314,74 +346,104 @@ class MempoolAnalytica():
 
                         key = fee_rate
                         if key > 10 and key < 20:
-                            key = math.ceil(key / 2) * 2
+                            key = math.floor(key / 2) * 2
                         elif key > 20 and  key < 200:
-                            key = math.ceil(key / 10) * 10
+                            key = math.floor(key / 10) * 10
                         elif key > 200:
-                            key = math.ceil(key / 25) * 25
+                            key = math.floor(key / 25) * 25
                         try:
                             transactions["feeRateMap"][key]["count"] += 1
                             transactions["feeRateMap"][key]["size"] += row["size"]
+                            transactions["feeRateMap"][key]["vSize"] += v_size
                         except:
                             transactions["feeRateMap"][key] = {"count": 1,
                                                                "size": row["size"],
-                                                               "amount":  row["amount"]}
+                                                               "vSize": v_size}
+
+
                     if row["rbf"]:
                         transactions["rbfCount"] += 1
                     if row["segwit"]:
                         transactions["segwitCount"] += 1
                     if row["size"]:
                         transactions["size"]["total"] += row["size"]
+                        transactions["vSize"]["total"] += v_size
                         if transactions["size"]["max"]["value"] is None or \
                                 transactions["size"]["max"]["value"] < row["size"]:
                             transactions["size"]["max"]["value"] = row["size"]
                             transactions["size"]["max"]["txId"] = rh2s(row["tx_id"])
+
+                        if transactions["vSize"]["max"]["value"] is None or \
+                                transactions["vSize"]["max"]["value"] < v_size:
+                            transactions["vSize"]["max"]["value"] = v_size
+                            transactions["vSize"]["max"]["txId"] = rh2s(row["tx_id"])
+
 
                         if transactions["size"]["min"]["value"] is None or \
                                 transactions["size"]["min"]["value"] > row["size"]:
                             transactions["size"]["min"]["value"] = row["size"]
                             transactions["size"]["min"]["txId"] = rh2s(row["tx_id"])
 
+                        if transactions["vSize"]["min"]["value"] is None or \
+                                transactions["vSize"]["min"]["value"] > v_size:
+                            transactions["vSize"]["min"]["value"] = v_size
+                            transactions["vSize"]["min"]["txId"] = rh2s(row["tx_id"])
+
+                if transactions["vSize"]["total"] > 1000000:
+                    transactions["feeRate"]["best"] = round(best_fee, 2)
+                else:
+                    transactions["feeRate"]["best"] = 1
+
+
 
                 async with self.db_pool.acquire() as conn:
-                    await conn.execute("truncate table  mempool_dbs;")
-                    await conn.execute("truncate table  mempool_dbs_childs;")
-                    await conn.copy_records_to_table('mempool_dbs',
-                                                     columns=["tx_id", "timestamp"],
-                                                     records=dbs_records)
+                    async with conn.transaction():
+                        if truncate_dbs_table:
+                            await conn.execute("truncate table  mempool_dbs;")
+                            truncate_dbs_table = False
+                        await conn.copy_records_to_table('mempool_dbs',
+                                                         columns=["tx_id", "timestamp", "child"],
+                                                         records=dbs_records)
 
-                    await conn.copy_records_to_table('mempool_dbs_childs',
-                                                     columns=["tx_id", "timestamp"],
-                                                     records=dbs_childs_records)
-                    s_minute = int(time.time()) // 60
-                    if s_minute % 60 == 0 and self.last_hour < s_minute // 60:
-                        s_hour = s_minute // 60
-                        self.last_hour = s_hour
-                        if s_hour % 24 == 0 and self.last_day < s_hour // 24:
-                            s_day = s_hour // 24
-                            self.last_day = s_day
+                        s_minute = int(time.time()) // 60
+                        if s_minute % 60 == 0 and self.last_hour < s_minute // 60:
+                            s_hour = s_minute // 60
+                            self.last_hour = s_hour
+                            if s_hour % 24 == 0 and self.last_day < s_hour // 24:
+                                s_day = s_hour // 24
+                                self.last_day = s_day
+                            else:
+                                s_day = None
                         else:
+                            s_hour = None
                             s_day = None
-                    else:
-                        s_hour = None
-                        s_day = None
 
+                        if self.last_minute != s_minute or transactions["feeRate"]["bestHourly"] is None:
+                            best_fee_hourly.set(transactions["feeRate"]["best"])
+                            f = 0
+                            for i in best_fee_hourly.items:
+                                f += i
+                            f4 = 0
+                            for i in best_fee_4h.items:
+                                f4 += i
+                            transactions["feeRate"]["bestHourly"] = round(f / len(best_fee_hourly.items), 2)
+                            transactions["feeRate"]["best4h"] = round(f4 / len(best_fee_4h.items), 2)
 
-                    await conn.execute("INSERT INTO mempool_analytica "
-                                       "(minute, hour, day, inputs, outputs, transactions)"
-                                       " VALUES "
-                                       "($1, $2, $3, $4, $5, $6) "
-                                       "ON CONFLICT (minute) "
-                                       "DO UPDATE SET "
-                                       " inputs = $4,"
-                                       " outputs = $5, "
-                                       " transactions = $6",
-                                       s_minute,
-                                       s_hour,
-                                       s_day,
-                                       json.dumps(inputs),
-                                       json.dumps(outputs),
-                                       json.dumps(transactions))
+                        await conn.execute("INSERT INTO mempool_analytica "
+                                           "(minute, hour, day, inputs, outputs, transactions)"
+                                           " VALUES "
+                                           "($1, $2, $3, $4, $5, $6) "
+                                           "ON CONFLICT (minute) "
+                                           "DO UPDATE SET "
+                                           " inputs = $4,"
+                                           " outputs = $5, "
+                                           " transactions = $6",
+                                           s_minute,
+                                           s_hour,
+                                           s_day,
+                                           json.dumps(inputs),
+                                           json.dumps(outputs),
+                                           json.dumps(transactions))
 
                 if s_hour is not None:
                     self.log.warning("Mempool analytica hourly point saved %s" % s_hour)
@@ -389,7 +451,8 @@ class MempoolAnalytica():
                                    (transactions["count"],
                                     inputs["count"],
                                     outputs["count"],
-                                    transactions["doublespend"]["count"], q))
+                                    transactions["doublespend"]["count"] +
+                                    transactions["doublespendChilds"]["count"], q))
                 q = time.time() - q
                 if q < 1:
                     await asyncio.sleep(1 - q)
@@ -398,16 +461,44 @@ class MempoolAnalytica():
 
                 if self.last_minute != s_minute:
                     self.last_minute = s_minute
-                    self.log.debug("Mempool transactions %s; STXO : %s; UTXO %s; DBS %s; round time %s;" %
+                    self.log.debug("Mempool TX %s; STXO %s; UTXO %s; DBS %s; %s; %s; Best fee  %s/%s/%s; Round time %s;" %
                                    (transactions["count"],
                                     inputs["count"],
                                     outputs["count"],
-                                    transactions["doublespend"]["count"], q))
+                                    transactions["doublespend"]["count"] +
+                                    transactions["doublespendChilds"]["count"],
+                                    format_bytes(transactions["size"]["total"]),
+                                    format_vbytes(transactions["vSize"]["total"]),
+                                    transactions["feeRate"]["best"],
+                                    transactions["feeRate"]["bestHourly"],
+                                    transactions["feeRate"]["best4h"],
+                                    round(q,4)))
 
 
                 # assert len(tx) == len(txsi)
                 # assert len(tx) == len(txso)
-
+                #
+                # async with self.db_pool.acquire() as conn:
+                #     v = await conn.fetch("SELECT transaction.tx_id FROM  unconfirmed_transaction "
+                #                             " JOIN transaction ON unconfirmed_transaction.tx_id = transaction.tx_id "
+                #                             "LIMIT 1000;")
+                #     k = [t["tx_id"] for t in v]
+                #     for t in v:
+                #         print(rh2s(t["tx_id"]))
+                #     v = await conn.fetch("SELECT  tx_id FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                #     print(v)
+                #     v = await conn.fetch("DELETE  FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                #     print(v)
+                #     v = await conn.fetch("SELECT  tx_id FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                #     print(v)
+                #     v = await conn.fetch("SELECT  out_tx_id FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
+                #     print(v)
+                #     v = await conn.fetch("DELETE  FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
+                #     print(v)
+                #     v = await conn.fetch("SELECT  out_tx_id FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
+                #     print(v)
+                #     if v == []:
+                #         await conn.fetch("DELETE  FROM  unconfirmed_transaction WHERE tx_id = ANY($1);", k)
             except asyncio.CancelledError:
                 self.log.warning("Mempool analytica task canceled")
                 break

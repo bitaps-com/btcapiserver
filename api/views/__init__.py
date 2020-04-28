@@ -33,7 +33,6 @@ from .mempool import get_mempool_transactions
 from .mempool import get_mempool_state
 from .mempool import get_mempool_invalid_transactions
 from .mempool import get_mempool_doublespend_transactions
-from .mempool import get_mempool_doublespend_child_transactions
 
 from .address import get_address_state
 from .address import get_address_confirmed_utxo

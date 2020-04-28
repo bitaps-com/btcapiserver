@@ -730,10 +730,10 @@ class App:
                     else:
                         await conn.execute("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1);",
                                             block["mempoolInvalid"]["tx"])
-                    self.log.debug("    Delete invalid from unconfirmed_transaction %s;"
+                    self.log.debug("    Delete invalid from unconfirmed_transaction %s; "
                                    "Copy to invalid_transaction %s;" % (diutx, ciutx))
 
-                    self.log.debug("    Copy to invalid utxo %s;"
+                    self.log.debug("    Copy to invalid utxo %s; "
                                    "Insert into invalid_stxo %s;" % (ciutxo, iistxo))
 
 
@@ -753,7 +753,7 @@ class App:
                         await conn.copy_records_to_table('invalid_transaction_map',
                                                          columns=["tx_id", "address"], records=d_records)
                         citxm = round(time.time() - qt2, 2)
-                        self.log.debug("    Delete invalid unconfirmed_transaction_map %s;"
+                        self.log.debug("    Delete invalid unconfirmed_transaction_map %s; "
                                        "Copy to invalid_transaction_map %s;" % (ditxm, citxm))
                     else:
                         await conn.execute("DELETE FROM unconfirmed_transaction_map WHERE tx_id = ANY($1);",
@@ -800,9 +800,9 @@ class App:
                 await conn.copy_records_to_table('stxo', columns=["pointer", "s_pointer", "address", "amount"],
                                                  records=stxo)
                 cstxo = round(time.time() - qt2, 2)
-                self.log.debug("    Delete from unconfirmed_transaction_map %s;"
-                               "Copy to transaction_map %s;"
-                               "Select pointers %s;"
+                self.log.debug("    Delete from unconfirmed_transaction_map %s; "
+                               "Copy to transaction_map %s; "
+                               "Select pointers %s; "
                                "Insert into stxo %s;" % (dutxm, cutxm, sptr, cstxo))
 
             # block filters
@@ -1267,7 +1267,8 @@ if __name__ == '__main__':
         connector_log_level = logging.DEBUG
 
     ch = logging.StreamHandler()
-    formatter = colorlog.ColoredFormatter('%(log_color)s%(asctime)s %(levelname)s: %(message)s (%(module)s:%(lineno)d)')
+    # formatter = colorlog.ColoredFormatter('%(log_color)s%(asctime)s %(levelname)s: %(message)s (%(module)s:%(lineno)d)')
+    formatter = colorlog.ColoredFormatter('%(log_color)s%(asctime)s: %(message)s')
     ch.setFormatter(formatter)
     logger.addHandler(ch)
     logger_connector.addHandler(ch)

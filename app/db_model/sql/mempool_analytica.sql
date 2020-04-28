@@ -21,12 +21,13 @@ CREATE TABLE IF NOT EXISTS  mempool_analytica(minute INT4 PRIMARY KEY,
                                               outputs JSONB,
                                               transactions JSONB);
 
-CREATE TABLE IF NOT EXISTS  mempool_dbs(tx_id BYTEA PRIMARY KEY, timestamp INT4);
-CREATE TABLE IF NOT EXISTS  mempool_dbs_childs(tx_id BYTEA PRIMARY KEY, timestamp INT4);
+
+CREATE TABLE IF NOT EXISTS  mempool_dbs(tx_id BYTEA PRIMARY KEY, timestamp INT4, child SMALLINT, id BIGSERIAL);
 
 
 CREATE INDEX IF NOT EXISTS mempool_dbs_timestamp ON mempool_dbs USING hash (timestamp);
-CREATE INDEX IF NOT EXISTS mempool_dbs_childs_timestamp ON mempool_dbs_childs USING hash (timestamp);
+CREATE INDEX IF NOT EXISTS mempool_dbs_id ON mempool_dbs USING hash (id);
+CREATE INDEX IF NOT EXISTS mempool_dbs_childs_timestamp ON mempool_dbs USING BTREE (child, timestamp);
 
 CREATE OR REPLACE FUNCTION set_fee_rate_column()
                             RETURNS TRIGGER AS $$

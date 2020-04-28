@@ -14,12 +14,18 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
     mempool_rank = None
     invalid_tx = False
     invalidation_timestamp = None
-
+    mempool_conflict = False
     last_dep = dict()
     conflict_outpoints = deque()
 
     async with app["db_pool"].acquire() as conn:
         if isinstance(pointer, bytes):
+            row = await conn.fetchrow("SELECT tx_id "
+                                         "FROM mempool_dbs "
+                                         "WHERE tx_id = $1 LIMIT 1;", pointer)
+            if row:
+                mempool_conflict = True
+
             row = await conn.fetchrow("SELECT tx_id, raw_transaction, timestamp "
                                          "FROM unconfirmed_transaction "
                                          "WHERE tx_id = $1 LIMIT 1;", pointer)
@@ -176,10 +182,13 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
 
                         tx["vIn"][i]["blockHeight"] = None
                         tx["vIn"][i]["confirmations"] = None
-                    if invalid_tx:
+                    if invalid_tx or mempool_conflict:
                         op = b"%s%s" % (s2rh(tx["vIn"][i]["txId"]), int_to_bytes(tx["vIn"][i]["vOut"]))
                         conflict_outpoints.append(op)
-                        last_dep[op[:32]] = (tx["vIn"][i]["txId"], tx["vIn"][i]["vOut"])
+                        try:
+                            last_dep[op[:32]].add(tx["vIn"][i]["vOut"])
+                        except:
+                            last_dep[op[:32]] = {tx["vIn"][i]["vOut"]}
 
                     if r["address"][0] in (0, 1, 2, 5, 6):
                         script_hash = True if r["address"][0] in (1, 6) else False
@@ -275,7 +284,7 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
     tx["valid"] = not invalid_tx
     tx["feeRate"] = round(tx["fee"] / tx["vSize"])
 
-    if invalid_tx:
+    if invalid_tx or mempool_conflict:
         m_conflict = []
         i_conflict_chain = []
         dep_chain = [[tx["txId"]]]
@@ -284,10 +293,9 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
         # find out mainnet competitors and invalid tx chains
         while last_dep:
             async with app["db_pool"].acquire() as conn:
-                rows = await conn.fetch("SELECT distinct tx_id, pointer FROM transaction where tx_id = ANY($1)", last_dep.keys())
+                rows = await conn.fetch("SELECT  tx_id, pointer FROM transaction where tx_id = ANY($1)", last_dep.keys())
             if len(rows) >= len(last_dep):
                 break
-
             for row in rows:
                 try:
                     del last_dep[row["tx_id"]]
@@ -297,39 +305,60 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
 
             # go deeper
             async with app["db_pool"].acquire() as conn:
-                rows = await conn.fetch("SELECT invalid_stxo.out_tx_id,"
-                                        "        outpoint "
-                                         "from invalid_stxo "
-                                         "WHERE tx_id = ANY($1)", last_dep.keys())
+                if invalid_tx:
+                    rows = await conn.fetch("SELECT out_tx_id,"
+                                            "       outpoint "
+                                             "from invalid_stxo "
+                                             "WHERE tx_id = ANY($1)", last_dep.keys())
+                else:
+                    rows = await conn.fetch("SELECT out_tx_id,"
+                                            "       outpoint "
+                                             "from connector_unconfirmed_stxo "
+                                             "WHERE tx_id = ANY($1)", last_dep.keys())
             last_dep = dict()
             conflict_outpoints = deque()
             for row in rows:
-                last_dep[row["out_tx_id"]] = (rh2s(row["outpoint"][:32]), bytes_to_int(row["outpoint"][32:]))
+                v_out = bytes_to_int(row["outpoint"][32:])
+                try:
+                    last_dep[row["out_tx_id"]].add(v_out)
+                except:
+                    last_dep[row["out_tx_id"]] = {v_out}
+
                 conflict_outpoints.append(row["outpoint"])
             conflict_outpoints_chain.append(conflict_outpoints)
 
-        pointer = rows[0]["pointer"]
+
         o_pointers = set()
         pointer_map = dict()
-        for t in last_dep:
-            pointer_map[pointer +(1<<19) +last_dep[t][1]] = last_dep[t]
-            o_pointers.add(pointer +(1<<19) + last_dep[t][1])
-
-        async with app["db_pool"].acquire() as conn:
-            rows = await conn.fetch("SELECT transaction.tx_id, stxo.s_pointer, stxo.pointer  "
-                                    "FROM stxo "
-                                    "JOIN transaction on transaction.pointer = (stxo.s_pointer >> 18)<<18 "
-                                    "WHERE stxo.pointer = ANY($1);", o_pointers)
 
         for row in rows:
-            m_conflict.append({
-                               "doublespend": {"txId": pointer_map[row["pointer"]][0],
-                                               "vOut": pointer_map[row["pointer"]][1],
-                                               "block": row["pointer"] >> 39},
-                               "competitor": {"txId": rh2s(row["tx_id"]),
-                                              "vIn":row["s_pointer"] &  524287,
-                                              "block": row["s_pointer"] >> 39}
-                               })
+            pointer = row["pointer"]
+            t = row["tx_id"]
+            for v_out in last_dep[t]:
+                pointer_map[pointer +(1<<19) + v_out] = [rh2s(t), v_out]
+                o_pointers.add(pointer +(1<<19) + v_out)
+                if mempool_conflict:
+                    m_conflict.append({
+                        "outpoint": {"txId": rh2s(t),
+                                        "vOut": v_out,
+                                        "block": pointer >> 39}})
+
+        if invalid_tx:
+            async with app["db_pool"].acquire() as conn:
+                rows = await conn.fetch("SELECT transaction.tx_id, stxo.s_pointer, stxo.pointer  "
+                                        "FROM stxo "
+                                        "JOIN transaction on transaction.pointer = (stxo.s_pointer >> 18)<<18 "
+                                        "WHERE stxo.pointer = ANY($1);", o_pointers)
+            for row in rows:
+                m_conflict.append({
+                                   "doublespend": {"txId": pointer_map[row["pointer"]][0],
+                                                   "vOut": pointer_map[row["pointer"]][1],
+                                                   "block": row["pointer"] >> 39},
+                                   "competitor": {"txId": rh2s(row["tx_id"]),
+                                                  "vIn":row["s_pointer"] &  524287,
+                                                  "block": row["s_pointer"] >> 39}
+                                   })
+
         chain = dep_chain
 
 
@@ -338,21 +367,39 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
         # check invalid transactions competitors
         for conflict_outpoints in conflict_outpoints_chain:
             [atx.add(t[:32]) for t in conflict_outpoints]
-            async with app["db_pool"].acquire() as conn:
-                irows = await conn.fetch("SELECT invalid_stxo.tx_id,"
-                                         "       invalid_stxo.out_tx_id, "
-                                         "       invalid_stxo.input_index, "
-                                         "       invalid_stxo.outpoint, "
-                                         "       invalid_transaction.size, "
-                                         "       invalid_transaction.b_size, "
-                                         "       invalid_transaction.feerate, "
-                                         "       invalid_transaction.fee,"
-                                         "       invalid_transaction.rbf, "
-                                         "       invalid_transaction.segwit "
-                                         "from invalid_stxo "
-                                         "JOIN invalid_transaction "
-                                         "ON invalid_transaction.tx_id = invalid_stxo.tx_id "
-                                         "WHERE outpoint = ANY($1)", conflict_outpoints)
+
+            if invalid_tx:
+                async with app["db_pool"].acquire() as conn:
+                    irows = await conn.fetch("SELECT invalid_stxo.tx_id,"
+                                             "       invalid_stxo.out_tx_id, "
+                                             "       invalid_stxo.input_index, "
+                                             "       invalid_stxo.outpoint, "
+                                             "       invalid_transaction.size, "
+                                             "       invalid_transaction.b_size, "
+                                             "       invalid_transaction.feerate, "
+                                             "       invalid_transaction.fee,"
+                                             "       invalid_transaction.rbf, "
+                                             "       invalid_transaction.segwit "
+                                             "from invalid_stxo "
+                                             "JOIN invalid_transaction "
+                                             "ON invalid_transaction.tx_id = invalid_stxo.tx_id "
+                                             "WHERE outpoint = ANY($1)", conflict_outpoints)
+            else:
+                async with app["db_pool"].acquire() as conn:
+                    irows = await conn.fetch("SELECT connector_unconfirmed_stxo.tx_id,"
+                                             "       connector_unconfirmed_stxo.out_tx_id, "
+                                             "       connector_unconfirmed_stxo.input_index, "
+                                             "       connector_unconfirmed_stxo.outpoint, "
+                                             "       unconfirmed_transaction.size, "
+                                             "       unconfirmed_transaction.b_size, "
+                                             "       unconfirmed_transaction.feerate, "
+                                             "       unconfirmed_transaction.fee,"
+                                             "       unconfirmed_transaction.rbf, "
+                                             "       unconfirmed_transaction.segwit "
+                                             "from connector_unconfirmed_stxo "
+                                             "JOIN unconfirmed_transaction "
+                                             "ON unconfirmed_transaction.tx_id = connector_unconfirmed_stxo.tx_id "
+                                             "WHERE outpoint = ANY($1)", conflict_outpoints)
 
             i_conflict = []
             for row in irows:
@@ -371,22 +418,24 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
                                                       }})
             i_conflict_chain.append(i_conflict)
 
-
-
-
-
-
-        del tx["blockHash"]
-        del tx["confirmations"]
-        del tx["blockTime"]
-        del tx["blockIndex"]
-        del tx["blockHeight"]
-        del tx["adjustedTimestamp"]
+        if invalid_tx:
+            del tx["blockHash"]
+            del tx["confirmations"]
+            del tx["blockTime"]
+            del tx["blockIndex"]
+            del tx["blockHeight"]
+            del tx["adjustedTimestamp"]
         if "flag" in tx:
             del tx["flag"]
-
-        tx["conflict"] = {"blockchain": m_conflict, "invalidTxCompetitors": i_conflict_chain, "invalidTxChain": chain,
-                          "invalidationTimestamp": invalidation_timestamp}
+        if invalid_tx:
+            tx["conflict"] = {"blockchain": m_conflict,
+                              "invalidTxCompetitors": i_conflict_chain,
+                              "invalidTxChain": chain,
+                              "invalidationTimestamp": invalidation_timestamp}
+        else:
+            tx["conflict"] = {"blockchain": m_conflict,
+                              "txCompetitors": i_conflict_chain,
+                              "unconfirmedChain": chain}
 
     return {"data": tx,
             "time": round(time.time() - q, 4)}
