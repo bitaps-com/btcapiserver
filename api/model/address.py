@@ -254,10 +254,13 @@ async def address_state_extended(address, app):
             fsp = row["s_pointer"]
 
         try:
-            tx_map[row["s_pointer"] >> 20] -= row["s_pointer"]
+            tx_map[row["s_pointer"] >> 20] -= row["amount"]
         except:
-            tx_map[row["s_pointer"] >> 20] = 0 - row["s_pointer"]
-
+            tx_map[row["s_pointer"] >> 20] = 0 - row["amount"]
+        try:
+            tx_map[row["pointer"] >> 20] += row["amount"]
+        except:
+            tx_map[row["pointer"] >> 20] = row["amount"]
         ltp = row["pointer"]
 
 
@@ -283,7 +286,7 @@ async def address_state_extended(address, app):
     largest_received_amount = 0
     largest_spent_pointer = None
     largest_received_pointer = None
-
+    print(len(tx_map))
     for k in tx_map:
         if tx_map[k] < 0:
             sent_tx_count += 1
@@ -298,8 +301,8 @@ async def address_state_extended(address, app):
 
     if largest_spent_amount is not None:
         largest_spent_amount = abs(largest_spent_amount)
-
-    frp = "%s:%s" %  (frp >> 39, (frp >> 20) & 524287)
+    if frp:
+        frp = "%s:%s" %  (frp >> 39, (frp >> 20) & 524287)
 
     if ltp:
         ltp = "%s:%s" %  (ltp >> 39, (ltp >> 20) & 524287)
@@ -402,7 +405,6 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
         count = await conn.fetchval("SELECT count(pointer) FROM transaction_map "
                                     "WHERE address = ANY($1) %s;" % from_block_str, a)
         pages = math.ceil(count / limit)
-
         rows = await conn.fetch("SELECT  transaction.pointer,"
                                 "        transaction.raw_transaction,"
                                 "        transaction.tx_id,  "
@@ -413,11 +415,7 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
                                 "order by  transaction_map.pointer %s "
                                 "LIMIT $2 OFFSET $3;" % (from_block_str, order) ,
                                 a, limit,  limit * (page - 1))
-
     target_scripts = []
-
-
-
     tx_list = []
     s_pointers = []
     tx_id_set = set()
@@ -430,7 +428,6 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
         tx["blockIndex"] = (row["pointer"] >> 20) & 524287
         tx["timestamp"] = row["timestamp"]
         tx["confirmations"] = app["last_block"] - tx["blockHeight"] + 1
-        tx["rbf"] = False
         try:
             tx["blockTime"] = app["block_map_time"][tx["blockHeight"]][1]
         except:
@@ -451,16 +448,13 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
                 ts[d[1:].hex()] = 0
         target_scripts.append(ts)
 
-
     async with app["db_pool"].acquire() as conn:
         stxo = await conn.fetch("SELECT s_pointer, pointer, amount, address FROM stxo "
                                 "WHERE stxo.s_pointer = ANY($1);", s_pointers)
     stxo_map = {}
 
-
     for row in stxo:
         stxo_map[row["s_pointer"]] = (row["address"], row["amount"], row["pointer"])
-
 
     for i in range(len(tx_list)):
         tx_list[i]["inputsAmount"] = 0
@@ -487,10 +481,9 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
                             ad = b"\x02" + parse_script(d[0][1:])["addressHash"]
                         else:
                             ad = d[0]
-                        tx_list[i]["vIn"][k]["address"] = hash_to_address(ad[1:],
-                                                                    testnet=app["testnet"],
-                                                                    script_hash=script_hash,
-                                                                    witness_version=witness_version)
+                        tx_list[i]["vIn"][k]["address"] = hash_to_address(ad[1:], testnet=app["testnet"],
+                                                                          script_hash=script_hash,
+                                                                          witness_version=witness_version)
 
                         tx_list[i]["vIn"][k]["scriptPubKey"] = address_to_script(tx_list[i]["vIn"][k]["address"], hex=1)
                     except:
@@ -506,10 +499,6 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
                 for ti in target_scripts[i]:
                     if ti == tx_list[i]["vIn"][k]["scriptPubKey"]:
                         target_scripts[i][ti] -= tx_list[i]["vIn"][k]["amount"]
-
-                if tx_list[i]["vIn"][k]["sequence"] < 0xfffffffe:
-                    tx_list[i]["vIn"][k]["rbf"] = True
-
 
         if not tx_list[i]["coinbase"]:
             tx_list[i]["fee"] = tx_list[i]["inputsAmount"] - tx_list[i]["amount"]
@@ -666,7 +655,6 @@ async def address_unconfirmed_transactions(address,  type, limit, page, order, m
         tx_id_set.add(row["tx_id"])
         tx = Transaction(row["raw_transaction"], testnet=app["testnet"])
         tx["timestamp"] = row["timestamp"]
-        tx["rbf"] = False
         tx_list.append(tx)
         try:
             tx["mempoolRank"] = mempool_rank_map[row["tx_id"]]
@@ -712,8 +700,12 @@ async def address_unconfirmed_transactions(address,  type, limit, page, order, m
                 tx_list[i]["vIn"][k]["amount"] = d[1]
                 tx_list[i]["inputsAmount"] += d[1]
                 pointer = d[2]
-                tx_list[i]["vIn"][k]["blockHeight"] = pointer >> 39
-                tx_list[i]["vIn"][k]["confirmations"] = app["last_block"] - (pointer >> 39) + 1
+                if pointer is not None:
+                    tx_list[i]["vIn"][k]["blockHeight"] = pointer >> 39
+                    tx_list[i]["vIn"][k]["confirmations"] = app["last_block"] - (pointer >> 39) + 1
+                else:
+                    tx_list[i]["vIn"][k]["blockHeight"] = None
+                    tx_list[i]["vIn"][k]["confirmations"] = None
 
                 if d[0][0] in (0, 1, 2, 5, 6):
                     script_hash = True if d[0][0] in (1, 6) else False

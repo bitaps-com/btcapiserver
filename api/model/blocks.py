@@ -88,7 +88,7 @@ async def blocks_last_n_hours(n, app):
 
 async def  data_last_n_blocks(n, app):
     pool = app["db_pool"]
-    q = time.time()
+    qt = time.time()
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT height,"
                                   "       hash,"
@@ -171,7 +171,7 @@ async def  data_last_n_blocks(n, app):
         r.append(block)
 
     resp = {"data": r,
-            "time": round(time.time() - q, 4)}
+            "time": round(time.time() - qt, 4)}
     return resp
 
 async def  blocks_data_last_n_hours(n, app):

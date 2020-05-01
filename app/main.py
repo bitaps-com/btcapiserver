@@ -379,6 +379,9 @@ class App:
 
             if self.transaction:
                 if self.mempool_analytica:
+                    fee = input_amounts - tx["amount"]
+                    if tx["coinbase"]:
+                        fee = 0
                     await conn.execute("""INSERT INTO unconfirmed_transaction (tx_id,
                                                                                raw_transaction,
                                                                                timestamp,
@@ -398,7 +401,7 @@ class App:
                                        int(tx["rbf"]),
                                        int(tx["segwit"]),
                                        tx["amount"],
-                                       input_amounts - tx["amount"])
+                                       fee)
 
                 else:
                     await conn.execute("""INSERT INTO unconfirmed_transaction (tx_id,

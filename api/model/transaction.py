@@ -282,7 +282,7 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
     if mempool_rank is not None:
         tx["mempoolRank"] = mempool_rank
     tx["valid"] = not invalid_tx
-    tx["feeRate"] = round(tx["fee"] / tx["vSize"])
+    tx["feeRate"] = round(tx["fee"] / tx["vSize"], 2)
 
     if invalid_tx or mempool_conflict:
         m_conflict = []
