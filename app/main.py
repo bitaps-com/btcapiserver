@@ -349,6 +349,9 @@ class App:
 
     async def new_transaction_handler(self, tx, timestamp, conn):
         try:
+            row = await conn.fetchrow('SELECT tx_id FROM transaction WHERE tx_id = $1 LIMIT 1;', tx["txId"])
+            if row is not None:
+                raise Exception("Already exist")
             raw_tx = tx.serialize(hex=False)
             tx_map = set()
             input_amounts = 0

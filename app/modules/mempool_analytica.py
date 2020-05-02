@@ -479,26 +479,28 @@ class MempoolAnalytica():
                 # assert len(tx) == len(txso)
                 #
                 # async with self.db_pool.acquire() as conn:
-                #     v = await conn.fetch("SELECT transaction.tx_id FROM  unconfirmed_transaction "
-                #                             " JOIN transaction ON unconfirmed_transaction.tx_id = transaction.tx_id "
-                #                             "LIMIT 1000;")
+                #     v = await conn.fetch("SELECT transaction.tx_id FROM  unconfirmed_transaction_map "
+                #                             " JOIN transaction ON unconfirmed_transaction_map.tx_id = transaction.tx_id "
+                #                             " ;")
                 #     k = [t["tx_id"] for t in v]
                 #     for t in v:
                 #         print(rh2s(t["tx_id"]))
-                #     v = await conn.fetch("SELECT  tx_id FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                #     # v = await conn.fetch("SELECT  tx_id FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
                 #     print(v)
-                #     v = await conn.fetch("DELETE  FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                #     v = await conn.fetch("DELETE  FROM  unconfirmed_transaction_map WHERE tx_id = ANY($1);", k)
                 #     print(v)
-                #     v = await conn.fetch("SELECT  tx_id FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
-                #     print(v)
-                #     v = await conn.fetch("SELECT  out_tx_id FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
-                #     print(v)
-                #     v = await conn.fetch("DELETE  FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
-                #     print(v)
-                #     v = await conn.fetch("SELECT  out_tx_id FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
-                #     print(v)
-                #     if v == []:
-                #         await conn.fetch("DELETE  FROM  unconfirmed_transaction WHERE tx_id = ANY($1);", k)
+                #     # v = await conn.fetch("DELETE  FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                #     # print(v)
+                # v = await conn.fetch("SELECT  tx_id FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                # print(v)
+                # v = await conn.fetch("SELECT  out_tx_id FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
+                # print(v)
+                # v = await conn.fetch("DELETE  FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
+                # print(v)
+                # v = await conn.fetch("SELECT  out_tx_id FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
+                # print(v)
+                # if v == []:
+                #     await conn.fetch("DELETE  FROM  unconfirmed_transaction WHERE tx_id = ANY($1);", k)
             except asyncio.CancelledError:
                 self.log.warning("Mempool analytica task canceled")
                 break

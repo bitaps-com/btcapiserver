@@ -447,6 +447,11 @@ async def get_address_transactions(request):
         mode = "brief"
 
     try:
+        timeline = True if parameters["timeline"] in ("1", "True") else False
+    except:
+        timeline = False
+
+    try:
         if addr_type in (0, 1, 5, 6):
             address_net = address_net_type(address)
             if address_net == "testnet" and not request.app["testnet"]:
@@ -463,7 +468,7 @@ async def get_address_transactions(request):
             except:
                 raise APIException(PARAMETER_ERROR, "invalid address")
 
-        response = await address_transactions(address, type, limit, page, order, mode, from_block, request.app)
+        response = await address_transactions(address, type, limit, page, order, mode, from_block, timeline, request.app)
         status = 200
     except APIException as err:
         status = err.status

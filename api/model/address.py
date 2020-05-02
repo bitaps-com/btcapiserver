@@ -48,6 +48,7 @@ async def address_state(address,  type, app):
                      "unconfirmed": int(uamount)},
             "time": round(time.time() - q, 4)}
 
+
 async def address_confirmed_utxo(address,  type, from_block, order, order_by, limit, page, app):
     q = time.time()
     utxo = []
@@ -367,7 +368,146 @@ async def address_state_extended(address, app):
                      },
             "time": round(time.time() - q, 4)}
 
-async def address_transactions(address,  type, limit, page, order, mode, from_block, app):
+async def address_state_extended_in_pointer(address, pointer, app):
+    q = time.time()
+    received_outs_count = 0
+    spent_outs_count = 0
+
+    received_amount = 0
+    sent_amount = 0
+    received_tx_count = 0
+    sent_tx_count = 0
+    balance = 0
+    frp = None
+    fsp = None
+    ltp = None
+
+
+    empty_result = {"balance": 0,
+                    "receivedAmount": 0,
+                    "receivedTxCount": 0,
+                    "sentAmount": 0,
+                    "sentTxCount": 0,
+                    "firstReceivedTxPointer": None,
+                    "firstSentTxPointer": None,
+                    "lastTxPointer": None,
+                    "largestTxAmount": None,
+                    "largestTxPointer": None,
+
+                    "largestSpentTxAmount": None,
+                    "largestSpentTxPointer": None,
+                    "largestReceivedTxAmount": None,
+                    "largestReceivedTxPointer": None,
+                    "receivedOutsCount": 0,
+                    "spentOutsCount": 0}
+
+    async with app["db_pool"].acquire() as conn:
+
+        stxo = await conn.fetch("SELECT pointer, s_pointer, amount FROM "
+                                "stxo WHERE address = ANY($1) and s_pointer < $2 ", address, pointer)
+
+        utxo = await conn.fetch("SELECT pointer, amount FROM "
+                                "connector_utxo WHERE address = ANY($1) and pointer < $2 ", address, pointer)
+
+
+        if not stxo and not utxo:
+            return {"data": empty_result,
+                    "time": round(time.time() - q, 4)}
+
+    tx_map = dict()
+
+
+    for row in stxo:
+        spent_outs_count += 1
+        received_outs_count += 1
+        received_amount += row["amount"]
+        sent_amount += row["amount"]
+
+        if not frp:
+            frp = row["pointer"]
+
+        if not fsp:
+            fsp = row["s_pointer"]
+
+        try:
+            tx_map[row["s_pointer"] >> 20] -= row["amount"]
+        except:
+            tx_map[row["s_pointer"] >> 20] = 0 - row["amount"]
+        try:
+            tx_map[row["pointer"] >> 20] += row["amount"]
+        except:
+            tx_map[row["pointer"] >> 20] = row["amount"]
+        ltp = row["pointer"]
+
+
+    for row in utxo:
+        received_outs_count += 1
+        received_amount += row["amount"]
+        balance += row["amount"]
+
+        if not frp:
+            frp = row["pointer"]
+
+        try:
+            tx_map[row["pointer"] >> 20] += row["amount"]
+        except:
+            tx_map[row["pointer"] >> 20] = row["amount"]
+
+        if ltp is None or ltp < row["pointer"]:
+            ltp = row["pointer"]
+
+
+
+    largest_spent_amount = 0
+    largest_received_amount = 0
+    largest_spent_pointer = None
+    largest_received_pointer = None
+
+    for k in tx_map:
+        if tx_map[k] < 0:
+            sent_tx_count += 1
+            if largest_spent_amount > tx_map[k]:
+                largest_spent_amount = tx_map[k]
+                largest_spent_pointer = "%s:%s" %  (k >> 19, k  & 524287)
+        else:
+            received_tx_count += 1
+            if largest_received_amount < tx_map[k]:
+                largest_received_amount = tx_map[k]
+                largest_received_pointer = "%s:%s" %  (k >> 19, k  & 524287)
+
+    if largest_spent_amount is not None:
+        largest_spent_amount = abs(largest_spent_amount)
+    if frp:
+        frp = "%s:%s" %  (frp >> 39, (frp >> 20) & 524287)
+
+    if ltp:
+        ltp = "%s:%s" %  (ltp >> 39, (ltp >> 20) & 524287)
+
+    if fsp is not None:
+        fsp = "%s:%s" %  (fsp >> 39, (fsp >> 20) & 524287)
+
+
+    return {"data": {"balance": balance,
+                     "receivedAmount": received_amount,
+                     "receivedTxCount": received_tx_count,
+                     "sentAmount": sent_amount,
+                     "sentTxCount": sent_tx_count,
+                     "firstReceivedTxPointer": frp,
+                     "firstSentTxPointer": fsp,
+                     "lastTxPointer": ltp,
+
+                     "largestSpentTxAmount": largest_spent_amount,
+                     "largestSpentTxPointer": largest_spent_pointer,
+                     "largestReceivedTxAmount": largest_received_amount,
+                     "largestReceivedTxPointer": largest_received_pointer,
+
+                     "receivedOutsCount": received_outs_count,
+                     "spentOutsCount": spent_outs_count
+                     },
+            "time": round(time.time() - q, 4)}
+
+
+async def address_transactions(address,  type, limit, page, order, mode, from_block, timeline, app):
     q = time.time()
     pages = 0
 
@@ -443,7 +583,7 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
         ts = dict()
         for d in a:
             if d[0] in (0, 1, 5, 6):
-                ts[hash_to_script(d[1:], d[0], hex=True)] = 0
+                ts[hash_to_script(d[1:], d[0], hex=True)] = {"r": 0, "s": 0, "i": 0, "o": 0}
             else:
                 ts[d[1:].hex()] = 0
         target_scripts.append(ts)
@@ -498,7 +638,8 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
                 tx_list[i]["vIn"][k]["scriptPubKeyAsm"] = decode_script(tx_list[i]["vIn"][k]["scriptPubKey"], 1)
                 for ti in target_scripts[i]:
                     if ti == tx_list[i]["vIn"][k]["scriptPubKey"]:
-                        target_scripts[i][ti] -= tx_list[i]["vIn"][k]["amount"]
+                        target_scripts[i][ti]["s"] += tx_list[i]["vIn"][k]["amount"]
+                        target_scripts[i][ti]["i"] += 1
 
         if not tx_list[i]["coinbase"]:
             tx_list[i]["fee"] = tx_list[i]["inputsAmount"] - tx_list[i]["amount"]
@@ -549,16 +690,28 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
                         tx_list[t]["vOut"][i]["spent"] = []
                 for ti in target_scripts[t]:
                     if ti == tx_list[t]["vOut"][i]["scriptPubKey"]:
-                        target_scripts[t][ti] += tx_list[t]["vOut"][i]["value"]
+                        target_scripts[t][ti]["r"] += tx_list[t]["vOut"][i]["value"]
+                        target_scripts[t][ti]["o"] += 1
                 if "address" in  tx_list[t]["vOut"][i]:
                     tx_list[t]["outAddressCount"] += 1
 
             address_amount = 0
+            address_received = 0
+            address_outputs = 0
+            address_sent = 0
+            address_inputs = 0
             for ti in target_scripts[t]:
-                address_amount += target_scripts[t][ti]
-
+                address_amount += target_scripts[t][ti]["r"] - target_scripts[t][ti]["s"]
+                address_received += target_scripts[t][ti]["r"]
+                address_outputs += target_scripts[t][ti]["o"]
+                address_sent += target_scripts[t][ti]["s"]
+                address_inputs += target_scripts[t][ti]["i"]
 
             tx_list[t]["amount"] = address_amount
+            tx_list[t]["addressReceived"] = address_received
+            tx_list[t]["addressOuts"] = address_outputs
+            tx_list[t]["addressSent"] = address_sent
+            tx_list[t]["addressInputs"] = address_inputs
 
 
         if mode != "verbose":
@@ -575,6 +728,42 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
             del tx_list[t]["flag"]
         except:
             pass
+
+
+    if timeline and tx_list:
+        r = await address_state_extended_in_pointer(a, tx_pointer + k, app)
+        state = {"receivedAmount": r['data']["receivedAmount"],
+                 "receivedTxCount": r['data']["receivedTxCount"],
+                 "sentAmount": r['data']["sentAmount"],
+                 "sentTxCount": r['data']["sentTxCount"],
+                 "receivedOutsCount": r['data']["receivedOutsCount"],
+                 "spentOutsCount": r['data']["spentOutsCount"]}
+
+        k = len(tx_list)
+        l = len(tx_list)
+        while k:
+            k -= 1
+            if order == "desc":
+                i = k
+            else:
+                i = l - (k + 1)
+            tx = tx_list[i]
+            state["receivedAmount"] += tx["addressReceived"]
+            state["receivedOutsCount"] += tx["addressOuts"]
+            state["sentAmount"] += tx["addressSent"]
+            state["spentOutsCount"] += tx["addressInputs"]
+            if  tx["addressReceived"] >= tx["addressSent"]:
+                state["receivedTxCount"] += 1
+            else:
+                state["sentTxCount"] += 1
+            tx_list[i]["timelineState"] = {"receivedAmount": state["receivedAmount"],
+                                             "receivedTxCount": state["receivedTxCount"],
+                                             "sentAmount": state["sentAmount"],
+                                             "sentTxCount": state["sentTxCount"],
+                                             "receivedOutsCount": state["receivedOutsCount"],
+                                             "spentOutsCount": state["spentOutsCount"]}
+
+
 
     return {"data": {"page": page,
                      "limit": limit,

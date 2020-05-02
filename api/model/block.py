@@ -205,6 +205,7 @@ async def block_transactions(pointer, option_raw_tx, limit, page, order, mode, a
                 raise APIException(NOT_FOUND, "block not found", status=404)
             pointer = block_row["height"]
             block_height = block_row["height"]
+
         else:
             block_height = pointer
             stmt = await conn.prepare("SELECT height, hash, header, adjusted_timestamp "
@@ -213,51 +214,50 @@ async def block_transactions(pointer, option_raw_tx, limit, page, order, mode, a
         if block_row is None:
             raise APIException(NOT_FOUND, "block not found", status=404)
 
-
-        if 1==9 and app["block_transactions"].has_key(block_row["hash"]):
-            transactions = app["block_transactions"][block_row["hash"]]
+        count = var_int_to_int(block_row["header"][80:])
+        pages = count // limit
+        if app["merkle_proof"]:
+            rows = await conn.fetch("SELECT tx_id, raw_transaction,  timestamp, pointer, merkle_proof  "
+                                    "FROM transaction  WHERE pointer >= $1 AND pointer < $2 "
+                                    "ORDER BY pointer %s LIMIT $3 OFFSET $4;" % order,
+                                    pointer << 39, (pointer + 1) << 39, limit + 1, limit * (page - 1))
         else:
+            rows = await conn.fetch("SELECT tx_id, raw_transaction,  timestamp, pointer  "
+                                    "FROM transaction  WHERE pointer >= $1 AND pointer < $2 "
+                                    "ORDER BY pointer %s LIMIT $3 OFFSET $4;" % order,
+                                    pointer << 39, (pointer + 1) << 39, limit + 1, limit * (page - 1))
+        block_time = unpack("<L", block_row["header"][68: 68 + 4])[0]
+
+        transactions = list()
+        for row in rows:
+            tx = Transaction(row["raw_transaction"], format="decoded",
+                             testnet=app["testnet"], keep_raw_tx=option_raw_tx)
+            tx["blockIndex"] = (row["pointer"] >> 20) & 524287
+            tx["blockTime"] = block_time
+            tx["timestamp"] = row["timestamp"]
+            tx["confirmations"] = app["last_block"] - block_height + 1
             if app["merkle_proof"]:
-                rows = await conn.fetch("SELECT tx_id, raw_transaction,  timestamp, pointer, merkle_proof  "
-                                        "FROM transaction  WHERE pointer >= $1 AND pointer < $2 "
-                                        "ORDER BY pointer %s LIMIT $3 OFFSET $4;" % order,
-                                        pointer << 39, (pointer + 1) << 39, limit + 1, limit * (page - 1))
-            else:
-                rows = await conn.fetch("SELECT tx_id, raw_transaction,  timestamp, pointer  "
-                                        "FROM transaction  WHERE pointer >= $1 AND pointer < $2 "
-                                        "ORDER BY pointer %s LIMIT $3 OFFSET $4;" % order,
-                                        pointer << 39, (pointer + 1) << 39, limit + 1, limit * (page - 1))
-            block_time = unpack("<L", block_row["header"][68: 68 + 4])[0]
+                tx["merkleProof"] = base64.b64encode(row["merkle_proof"]).decode()
 
-            transactions = list()
-            for row in rows:
-                tx = Transaction(row["raw_transaction"], format="decoded",
-                                 testnet=app["testnet"], keep_raw_tx=option_raw_tx)
-                tx["blockIndex"] = (row["pointer"] >> 20) & 524287
-                tx["blockTime"] = block_time
-                tx["timestamp"] = row["timestamp"]
-                tx["confirmations"] = app["last_block"] - block_height + 1
-                if app["merkle_proof"]:
-                    tx["merkleProof"] = base64.b64encode(row["merkle_proof"]).decode()
+            del tx["blockHash"]
+            del tx["blockTime"]
+            del tx["format"]
+            del tx["testnet"]
+            del tx["time"]
+            del tx["fee"]
+            if not option_raw_tx:
+                del tx["rawTx"]
+            if app["transaction_history"]:
+                tx["inputsAmount"] = 0
+            if mode == "brief":
+                tx["outputAddresses"] = 0
+                tx["inputAddresses"] = 0
+                for z in tx["vOut"]:
+                    if "address" in tx["vOut"][z]:
+                        tx["outputAddresses"] += 1
+            transactions.append(tx)
+        app["block_transactions"][block_row["hash"]] = transactions
 
-                del tx["blockHash"]
-                del tx["blockTime"]
-                del tx["format"]
-                del tx["testnet"]
-                del tx["time"]
-                del tx["fee"]
-                if not option_raw_tx:
-                    del tx["rawTx"]
-                if app["transaction_history"]:
-                    tx["inputsAmount"] = 0
-                if mode == "brief":
-                    tx["outputAddresses"] = 0
-                    tx["inputAddresses"] = 0
-                    for z in tx["vOut"]:
-                        if "address" in tx["vOut"][z]:
-                            tx["outputAddresses"] += 1
-                transactions.append(tx)
-            app["block_transactions"][block_row["hash"]] = transactions
         if app["transaction_history"]:
             # get information about spent input coins
             rows = await conn.fetch("SELECT pointer,"
@@ -344,7 +344,6 @@ async def block_transactions(pointer, option_raw_tx, limit, page, order, mode, a
                                         "stxo.pointer < $2  order by stxo.pointer ;",
                                         (block_height << 39) + ((limit * (page - 1) ) << 20),
                                         ((block_height) << 39) + ((limit * page ) << 20))
-
                 p_out_map = dict()
                 for v in rows:
                     p_out_map[v["pointer"]] = [{"txId": rh2s(v["tx_id"]),
@@ -361,7 +360,11 @@ async def block_transactions(pointer, option_raw_tx, limit, page, order, mode, a
                                 transactions[t]["vOut"][i]["spent"] = []
 
 
-    resp = {"data": transactions,
+    resp = {"data": {"list": transactions,
+                     "page": page,
+                     "pages": pages,
+                     "total": count,
+                     "limit": limit},
             "time": round(time.time() - q, 4)}
     return resp
 
