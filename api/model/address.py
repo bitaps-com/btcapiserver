@@ -404,10 +404,10 @@ async def address_state_extended_in_pointer(address, pointer, app):
     async with app["db_pool"].acquire() as conn:
 
         stxo = await conn.fetch("SELECT pointer, s_pointer, amount FROM "
-                                "stxo WHERE address = ANY($1) and s_pointer < $2 ", address, pointer)
+                                "stxo WHERE address = ANY($1) and s_pointer < $2 ", address, (pointer >> 20) << 20)
 
         utxo = await conn.fetch("SELECT pointer, amount FROM "
-                                "connector_utxo WHERE address = ANY($1) and pointer < $2 ", address, pointer)
+                                "connector_utxo WHERE address = ANY($1) and pointer < $2 ", address,(pointer >> 20) << 20)
 
 
         if not stxo and not utxo:
