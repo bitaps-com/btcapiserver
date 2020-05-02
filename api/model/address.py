@@ -405,26 +405,35 @@ async def address_state_extended_in_pointer(address, pointer, app):
 
         stxo = await conn.fetch("SELECT pointer, s_pointer, amount FROM "
                                 "stxo WHERE address = ANY($1) and s_pointer < $2 ", address, (pointer >> 20) << 20)
+        ustxo = await conn.fetch("SELECT pointer, amount FROM "
+                                "stxo WHERE address = ANY($1) and pointer < $2 ", address, (pointer >> 20) << 20)
 
         utxo = await conn.fetch("SELECT pointer, amount FROM "
                                 "connector_utxo WHERE address = ANY($1) and pointer < $2 ", address,(pointer >> 20) << 20)
 
-
-        if not stxo and not utxo:
+        if not stxo and not utxo and not ustxo:
             return {"data": empty_result,
                     "time": round(time.time() - q, 4)}
 
     tx_map = dict()
 
-
-    for row in stxo:
-        spent_outs_count += 1
+    for row in ustxo:
         received_outs_count += 1
         received_amount += row["amount"]
-        sent_amount += row["amount"]
 
         if not frp:
             frp = row["pointer"]
+
+        try:
+            tx_map[row["pointer"] >> 20] += row["amount"]
+        except:
+            tx_map[row["pointer"] >> 20] = row["amount"]
+        if ltp is None or ltp < row["pointer"] >> 20:
+            ltp = row["pointer"] >> 20
+
+    for row in stxo:
+        spent_outs_count += 1
+        sent_amount += row["amount"]
 
         if not fsp:
             fsp = row["s_pointer"]
@@ -433,11 +442,8 @@ async def address_state_extended_in_pointer(address, pointer, app):
             tx_map[row["s_pointer"] >> 20] -= row["amount"]
         except:
             tx_map[row["s_pointer"] >> 20] = 0 - row["amount"]
-        try:
-            tx_map[row["pointer"] >> 20] += row["amount"]
-        except:
-            tx_map[row["pointer"] >> 20] = row["amount"]
-        ltp = row["pointer"]
+        if ltp < row["s_pointer"] >> 20:
+            ltp = row["s_pointer"] >> 20
 
 
     for row in utxo:
@@ -453,8 +459,8 @@ async def address_state_extended_in_pointer(address, pointer, app):
         except:
             tx_map[row["pointer"] >> 20] = row["amount"]
 
-        if ltp is None or ltp < row["pointer"]:
-            ltp = row["pointer"]
+        if ltp is None or ltp < row["pointer"] >> 20:
+            ltp = row["pointer"] >> 20
 
 
 
@@ -481,7 +487,7 @@ async def address_state_extended_in_pointer(address, pointer, app):
         frp = "%s:%s" %  (frp >> 39, (frp >> 20) & 524287)
 
     if ltp:
-        ltp = "%s:%s" %  (ltp >> 39, (ltp >> 20) & 524287)
+        ltp = "%s:%s" %  (ltp >> 19, ltp   & 524287)
 
     if fsp is not None:
         fsp = "%s:%s" %  (fsp >> 39, (fsp >> 20) & 524287)
@@ -729,9 +735,12 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
         except:
             pass
 
-
+    print(timeline, len(tx_list))
     if timeline and tx_list:
-        r = await address_state_extended_in_pointer(a, tx_pointer + k, app)
+        tx_pointer= (tx_list[-1]["blockHeight"] << 39) + (tx_list[-1]["blockIndex"] << 20)
+        print(tx_list[-1]["blockHeight"])
+        r = await address_state_extended_in_pointer(a, tx_pointer, app)
+        print(r)
         state = {"receivedAmount": r['data']["receivedAmount"],
                  "receivedTxCount": r['data']["receivedTxCount"],
                  "sentAmount": r['data']["sentAmount"],
