@@ -145,8 +145,10 @@ async def block_data_by_pointer(pointer, app):
         d = json.loads(row["data"])
         for k in  d:
             block[k] = d[k]
-
-        block["miner"] = json.loads(row["miner"])
+        try:
+            block["miner"] = json.loads(row["miner"])
+        except:
+            block["miner"] = None
         block["medianBlockTime"] = app["block_map_time"][block["height"]][2]
         block["blockTime"] = app["block_map_time"][block["height"]][1]
         block["receivedTimestamp"] = row["timestamp_received"]
