@@ -463,7 +463,7 @@ class App:
                                     "           timestamp;", data["height"] << 39)
             pointer_map_tx_id = dict()
             batch = []
-
+            print("Deleted from transaction ")
             for row in rows:
                 pointer_map_tx_id[row["pointer"]] = row["tx_id"]
                 if row["tx_id"] == data["coinbase_tx_id"]: continue
@@ -473,7 +473,7 @@ class App:
                                   row["raw_transaction"],
                                   row["timestamp"],
                                   t["size"],
-                                  t["b_size"],
+                                  t["bSize"],
                                   int(t["rbf"]),
                                   int(t["segwit"]),
                                   t["fee"],
@@ -489,6 +489,7 @@ class App:
                                                  columns=["tx_id", "raw_transaction", "timestamp",
                                                           "size", "b_size", "rbf", "segwit", "fee", "amount"],
                                                  records=batch)
+                print("copy to unconfirmed_transaction ")
                 stxo, utxo, outpoints, invalid_tx_set = deque(), deque(), set(), set()
                 utransactions = deque()
                 utransactions_map = deque()
@@ -496,6 +497,7 @@ class App:
                     outpoints.add(s[0])
 
                 while outpoints:
+                    print("delete from invalid_stxo invalid_transaction invalid_transaction_map invalid_utxo")
                     s_rows = await conn.fetch("DELETE FROM invalid_stxo WHERE outpoint = ANY($1) "
                                               "RETURNING "
                                               "outpoint as op,"
@@ -560,10 +562,11 @@ class App:
                 await conn.copy_records_to_table('connector_unconfirmed_utxo',
                                                  columns=["outpoint", "out_tx_id",
                                                           "address", "amount"], records=utxo)
-
+                print("copy to unconfirmed_transaction, unconfirmed_transaction_map, connector_unconfirmed_utxo ")
 
                 stxo = set(stxo)
                 while stxo:
+                    print("insert into connector_unconfirmed_stxo", len(stxo))
                     rows = await conn.fetch("INSERT  INTO connector_unconfirmed_stxo "
                                             "(outpoint, sequence, out_tx_id, tx_id, input_index, address, amount, pointer) "
                                             " (SELECT r.outpoint,"
@@ -590,7 +593,7 @@ class App:
 
                     # in case double spend increment sequence
                     stxo = set((i[0], i[1] + 1, i[2], i[3], i[4], i[5], i[6], i[7]) for i in stxo)
-
+                print("insert into connector_unconfirmed_stxo done")
 
 
             else:
@@ -601,8 +604,9 @@ class App:
 
             # transaction map table
             if self.transaction_history:
+                print("delete from stxo", data["height"])
                 await conn.execute("DELETE FROM stxo WHERE s_pointer >= $1;",  data["height"] << 39)
-
+                print("delete from transaction_map", data["height"])
                 rows = await conn.fetch("DELETE FROM transaction_map WHERE pointer >= $1 " 
                                         "RETURNING  pointer, address;",  data["height"] << 39)
 
@@ -612,15 +616,16 @@ class App:
                     if tx_id == data["coinbase_tx_id"]:
                         continue
                     batch.append((tx_id, row["address"]))
-
+                print("delete from stxo, transaction_map done")
                 await conn.copy_records_to_table('unconfirmed_transaction_map',
                                                  columns=["tx_id", "address"],
                                                  records=batch)
+                print("copy to unconfirmed_transaction_map")
 
         # blocks table
 
         await conn.execute("DELETE FROM blocks WHERE height = $1;", data["height"])
-
+        print("delete from blocks")
         if self.block_filters:
             await conn.execute("DELETE FROM block_filters_batch WHERE height = $1;", data["height"])
             await conn.execute("DELETE FROM block_filter WHERE height = $1;", data["height"])
@@ -628,6 +633,7 @@ class App:
         if self.address_state:
             if self.address_state_block == data["height"]:
                 self.address_state_block -= 1
+        print("done")
 
     async def new_block_handler(self, block, conn):
         try:
@@ -1190,6 +1196,8 @@ class App:
 
                 await conn.execute("CREATE INDEX IF NOT EXISTS transaction_map_address "
                                    "ON transaction_map USING BTREE (address, pointer);")
+                await conn.execute("CREATE INDEX IF NOT EXISTS transaction_map_pointer "
+                                   "ON transaction_map USING BTREE (pointer);")
 
     async def create_address_utxo_index(self):
         async with self.db_pool.acquire() as conn:

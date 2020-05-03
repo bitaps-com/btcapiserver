@@ -119,6 +119,7 @@ class MempoolAnalytica():
         utxo_sequence = 0
         stxo_sequence = 0
         tx_sequence = 0
+        best_fee = 1
         dbs = set()
         dbs_childs = set()
         outputs, inputs, transactions = self.refresh_stat()
@@ -169,7 +170,7 @@ class MempoolAnalytica():
                             dbs_childs = set()
                             truncate_dbs_table = True
 
-                        stxo = await conn.fetch("SELECT tx_id, out_tx_id, address, amount, pointer, sequence, id  "
+                        stxo = await conn.fetch("SELECT tx_id, out_tx_id, address, amount, pointer, sequence, outpoint,  id  "
                                                 "FROM connector_unconfirmed_stxo "
                                                 "WHERE id > $1;", stxo_sequence)
                         utxo = await conn.fetch("SELECT out_tx_id as tx_id, address, amount, id "
@@ -178,19 +179,24 @@ class MempoolAnalytica():
                         tx = await conn.fetch("SELECT tx_id, size, b_size, rbf, fee, "
                                               "amount, segwit, timestamp, id  FROM unconfirmed_transaction "
                                               "WHERE id > $1;", tx_sequence)
-                        best_fee = await conn.fetchval("select min(feerate)  "
+                        row = await conn.fetchval("select min(feerate)  "
                                                     "from (select feerate, sum((size + b_size * 4)/4) "
                                                     "over (order by feerate desc) as block "
-                                                    "from unconfirmed_transaction) t where block <= 900000;")
+                                                    "from unconfirmed_transaction) t where block <= 920000;")
+                        if row is not None:
+                            best_fee = row
 
                 txsi = set()
                 txso = set()
+                dbs_outs = set()
+                dbs_set = set()
                 inputs["count"] += len(stxo)
                 for row in stxo:
                     if stxo_sequence < row["id"]:
                         stxo_sequence = row["id"]
                     if row["sequence"] > 0:
-                        dbs.add(row["tx_id"])
+                        dbs_outs.add(row["outpoint"])
+                        dbs_set.add(row["tx_id"])
                     txsi.add(row["tx_id"])
                     inputs["amount"]["total"] += row["amount"]
                     if inputs["amount"]["max"]["value"] is None or \
@@ -242,6 +248,23 @@ class MempoolAnalytica():
                         inputs["ageMap"][key]["amount"] += row["amount"]
                     except:
                         inputs["ageMap"][key] = {"count": 1, "amount": row["amount"]}
+
+
+
+                async with self.db_pool.acquire() as conn:
+                    dbs_rows = await conn.fetch("SELECT tx_id, outpoint  "
+                                            "FROM connector_unconfirmed_stxo "
+                                            "WHERE outpoint = ANY($1);", dbs_outs)
+                    out_map= set()
+
+
+                    for row in dbs_rows:
+                        if row["outpoint"] in out_map:
+                            if row["tx_id"] in dbs_set:
+                                dbs.add(row["tx_id"])
+                        else:
+                            out_map.add(row["outpoint"])
+
 
                 l_dbs_size = 0
                 while True:
@@ -418,7 +441,7 @@ class MempoolAnalytica():
                             s_hour = None
                             s_day = None
 
-                        if self.last_minute != s_minute or transactions["feeRate"]["bestHourly"] is None:
+                        if self.last_minute != s_minute or transactions["feeRate"]["bestHourly"] == 1:
                             best_fee_hourly.set(transactions["feeRate"]["best"])
                             f = 0
                             for i in best_fee_hourly.items:
@@ -459,7 +482,7 @@ class MempoolAnalytica():
                 if q > 10:
                     self.log.warning("Mempool analytica is to slow %s" % q)
 
-                if self.last_minute != s_minute:
+                if self.last_minute != s_minute or transactions["feeRate"]["best4h"] == 1:
                     self.last_minute = s_minute
                     self.log.debug("Mempool TX %s; STXO %s; UTXO %s; DBS %s; %s; %s; Best fee  %s/%s/%s; Round time %s;" %
                                    (transactions["count"],
@@ -479,14 +502,77 @@ class MempoolAnalytica():
                 # assert len(tx) == len(txso)
                 #
                 # async with self.db_pool.acquire() as conn:
-                #     v = await conn.fetch("SELECT transaction.tx_id FROM  unconfirmed_transaction_map "
-                #                             " JOIN transaction ON unconfirmed_transaction_map.tx_id = transaction.tx_id "
+                #     v = await conn.fetch("SELECT invalid_transaction.tx_id FROM  invalid_transaction "
+                #                                 " JOIN connector_unconfirmed_stxo ON connector_unconfirmed_stxo.tx_id = invalid_transaction.tx_id "
                 #                             " ;")
                 #     k = [t["tx_id"] for t in v]
                 #     for t in v:
                 #         print(rh2s(t["tx_id"]))
-                #     # v = await conn.fetch("SELECT  tx_id FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
-                #     print(v)
+                #     v = await conn.fetch("SELECT  outpoint, sequence FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                #     print("u", len(v))
+                #     uu = set()
+                #     pp = set()
+                #     for r in v:
+                #         uu.add(r["outpoint"])
+                #         pp.add((r["outpoint"], r["sequence"]))
+                #     v = await conn.fetch("SELECT  outpoint, sequence FROM  invalid_stxo WHERE tx_id = ANY($1);", k)
+                #     print("i", len(v))
+                #     ii = set()
+                #     for r in v:
+                #         ii.add((r["outpoint"], r["sequence"]))
+                #     e = 0
+                #     for i in ii:
+                #         if i[0] not in uu:
+                #             print("none", i[1])
+                #         else:
+                #             e += 1
+                #     print(">>", e)
+                #
+                #     v = await conn.fetch("SELECT  count(*)  from connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
+                #     print("connector_unconfirmed_utxo", v)
+                #     v = await conn.fetch("SELECT  count(*)  from unconfirmed_transaction WHERE tx_id = ANY($1);", k)
+                #     print("unconfirmed_transaction", v)
+                #     v = await conn.fetch("SELECT  count(*)  from unconfirmed_transaction_map WHERE tx_id = ANY($1);", k)
+                #     print("unconfirmed_transaction_map", v)
+                #     ff = 0
+                #     for i in pp:
+                #         v = await conn.fetchval("SELECT  count(*)  from invalid_stxo WHERE outpoint = $1 and sequence = $2;", i[0], i[1])
+                #         ff += v
+                #     print("ff", ff)
+                #     ll = list()
+                #     v = await conn.fetch("SELECT  outpoint, sequence, out_tx_id, tx_id, input_index, address, amount, pointer from connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                #     for i in v:
+                #         ll.append((i["outpoint"],
+                #                 i["sequence"],
+                #                 i["out_tx_id"],
+                #                 i["tx_id"],
+                #                 i["input_index"],
+                #                 i["address"],
+                #                 i["amount"],
+                #                 i["pointer"],
+                #                 ))
+                #     print("ll", len(ll))
+                #     try:
+                #         # await conn.copy_records_to_table('invalid_stxo',
+                #         #                                  columns=["outpoint",
+                #         #                                           "sequence",
+                #         #                                           "out_tx_id",
+                #         #                                           "tx_id",
+                #         #                                           "input_index",
+                #         #                                           "address",
+                #         #                                           "amount",
+                #         #                                           "pointer",],
+                #         #                                  records=ll)
+                #         # print("iok")
+                #          ###v = await conn.fetch("DELETE  FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                #     except Exception as err:
+                #         print(err)
+                #     await asyncio.sleep(50000)
+
+
+
+
+
                 #     v = await conn.fetch("DELETE  FROM  unconfirmed_transaction_map WHERE tx_id = ANY($1);", k)
                 #     print(v)
                 #     # v = await conn.fetch("DELETE  FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
