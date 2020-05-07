@@ -1,0 +1,11 @@
+#!/bin/sh
+docker container stop btcapi-server
+docker container rm btcapi-server
+parentdir="$(dirname "$(pwd)")"
+docker run --restart=always \
+           --name btcapi-server \
+           -v $parentdir/config:/config/ \
+           -v $parentdir/data/socket/:/var/run/postgresql/ \
+           -v $parentdir/app/:/app/ \
+           --net=host \
+           -it btcapi-server

@@ -19,7 +19,7 @@ import pickle
 from pybtc import Connector, encode_gcs, int_to_var_int, ripemd160, double_sha256, sha256
 from pybtc import Transaction, MRU, bytes_to_int
 from pybtc import map_into_range, siphash, target_to_difficulty, bits_to_target, int_to_bytes
-from pybtc import s2rh, rh2s, merkle_tree, merkle_proof, parse_script
+from pybtc import s2rh, rh2s, merkle_tree, merkle_proof, parse_script, SCRIPT_N_TYPES
 from struct  import  unpack
 import math
 
@@ -259,6 +259,9 @@ class App:
                                          block["header"] + int_to_var_int(len(block["rawTx"])),
                                          self.block_best_timestamp))
 
+                if self.blockchain_analytica:
+                    self.blocks_stat.append((block["height"],json.dumps(block["stat"])))
+
                 batch_ready = False
 
                 if len(self.transactions) >= self.batch_limit: batch_ready = True
@@ -282,6 +285,11 @@ class App:
                     if self.block_filters:
                         self.filters_batches[block["height"]] = self.filters
                         self.filters = deque()
+                    if self.blockchain_analytica:
+                        self.blocks_stat_batches[block["height"]] = self.blocks_stat
+                        self.blocks_stat = deque()
+
+
 
                     self.loop.create_task(self.save_batches())
         except:
@@ -337,7 +345,6 @@ class App:
                             await conn.execute("TRUNCATE TABLE unconfirmed_transaction_map;")
                         await conn.execute("UPDATE service SET value = '1' WHERE name = 'bootstrap_completed';")
                 await self.create_indexes()
-                await self.load_block_map()
                 return
             except asyncio.CancelledError:
                 return
@@ -417,7 +424,7 @@ class App:
             raise
 
     async def orphan_block_handler(self, data, conn):
-        print("orphan block")
+        self.log.warning("Remove orphaned block %" %  data["height"])
         if self.address_state:
             if not self.address_state_process.done():
                 self.log.debug("Wait for address state module block process completed ...")
@@ -456,6 +463,7 @@ class App:
 
         # transaction table
         if self.transaction:
+            self.log.debug("Delete records from transaction table ...")
             rows = await conn.fetch("DELETE FROM transaction WHERE pointer >= $1 "
                                     "RETURNING  tx_id,"
                                     "           raw_transaction,"
@@ -463,7 +471,7 @@ class App:
                                     "           timestamp;", data["height"] << 39)
             pointer_map_tx_id = dict()
             batch = []
-            print("Deleted from transaction ")
+
             for row in rows:
                 pointer_map_tx_id[row["pointer"]] = row["tx_id"]
                 if row["tx_id"] == data["coinbase_tx_id"]: continue
@@ -489,7 +497,7 @@ class App:
                                                  columns=["tx_id", "raw_transaction", "timestamp",
                                                           "size", "b_size", "rbf", "segwit", "fee", "amount"],
                                                  records=batch)
-                print("copy to unconfirmed_transaction ")
+                self.log.debug("Copy to unconfirmed_transaction ...")
                 stxo, utxo, outpoints, invalid_tx_set = deque(), deque(), set(), set()
                 utransactions = deque()
                 utransactions_map = deque()
@@ -497,7 +505,7 @@ class App:
                     outpoints.add(s[0])
 
                 while outpoints:
-                    print("delete from invalid_stxo invalid_transaction invalid_transaction_map invalid_utxo")
+                    self.log.debug("Delete from invalid_transaction_map and invalid_utxo ...")
                     s_rows = await conn.fetch("DELETE FROM invalid_stxo WHERE outpoint = ANY($1) "
                                               "RETURNING "
                                               "outpoint as op,"
@@ -562,11 +570,12 @@ class App:
                 await conn.copy_records_to_table('connector_unconfirmed_utxo',
                                                  columns=["outpoint", "out_tx_id",
                                                           "address", "amount"], records=utxo)
-                print("copy to unconfirmed_transaction, unconfirmed_transaction_map, connector_unconfirmed_utxo ")
+                self.log.debug("Copy to unconfirmed_transaction, "
+                               "unconfirmed_transaction_map, connector_unconfirmed_utxo ... ")
 
                 stxo = set(stxo)
                 while stxo:
-                    print("insert into connector_unconfirmed_stxo", len(stxo))
+                    self.log.debug("Insert into connector_unconfirmed_stxo %s" % len(stxo))
                     rows = await conn.fetch("INSERT  INTO connector_unconfirmed_stxo "
                                             "(outpoint, sequence, out_tx_id, tx_id, input_index, address, amount, pointer) "
                                             " (SELECT r.outpoint,"
@@ -593,20 +602,16 @@ class App:
 
                     # in case double spend increment sequence
                     stxo = set((i[0], i[1] + 1, i[2], i[3], i[4], i[5], i[6], i[7]) for i in stxo)
-                print("insert into connector_unconfirmed_stxo done")
-
-
+                self.log.debug("Insert into connector_unconfirmed_stxo completed")
             else:
                 await conn.copy_records_to_table('unconfirmed_transaction',
                                                  columns=["tx_id", "raw_transaction", "timestamp"],
                                                  records=batch)
-
-
             # transaction map table
             if self.transaction_history:
-                print("delete from stxo", data["height"])
+                self.log.debug("Delete from stxo [%s]" % data["height"])
                 await conn.execute("DELETE FROM stxo WHERE s_pointer >= $1;",  data["height"] << 39)
-                print("delete from transaction_map", data["height"])
+                self.log.debug("Delete from transaction_map [%s]" % data["height"])
                 rows = await conn.fetch("DELETE FROM transaction_map WHERE pointer >= $1 " 
                                         "RETURNING  pointer, address;",  data["height"] << 39)
 
@@ -616,16 +621,16 @@ class App:
                     if tx_id == data["coinbase_tx_id"]:
                         continue
                     batch.append((tx_id, row["address"]))
-                print("delete from stxo, transaction_map done")
+                self.log.debug("Delete from stxo, transaction_map completed")
                 await conn.copy_records_to_table('unconfirmed_transaction_map',
                                                  columns=["tx_id", "address"],
                                                  records=batch)
-                print("copy to unconfirmed_transaction_map")
+                self.log.debug("Copy to unconfirmed_transaction_map ...")
 
         # blocks table
 
         await conn.execute("DELETE FROM blocks WHERE height = $1;", data["height"])
-        print("delete from blocks")
+        self.log.debug("Delete from blocks")
         if self.block_filters:
             await conn.execute("DELETE FROM block_filters_batch WHERE height = $1;", data["height"])
             await conn.execute("DELETE FROM block_filter WHERE height = $1;", data["height"])
@@ -633,13 +638,55 @@ class App:
         if self.address_state:
             if self.address_state_block == data["height"]:
                 self.address_state_block -= 1
-        print("done")
+        self.log.debug("Completed")
 
     async def new_block_handler(self, block, conn):
         try:
             if block["miner"] is not None:
                 self.log.info("Mined by %s" % json.loads(block["miner"])["name"])
             hash_list = [s2rh(t) for t in block["tx"]]
+
+            if self.blockchain_analytica:
+                block_stat = {"inputs": {"count": 0,
+                                            "amount": {"max": {"value": None, "txId": None},
+                                                       "min": {"value": None, "txId": None},
+                                                       "total": 0},
+                                            "typeMap": {},
+                                            "amountMap": {}},
+                                 "outputs": {"count": 0,
+                                             "amount": {"max": {"value": None,
+                                                                "txId": None},
+                                                        "min": {"value": None,
+                                                                "txId": None},
+                                                        "total": 0},
+                                             "typeMap": {},
+                                             "amountMap": {}},
+                                 "transactions": {"count": 0,
+                                                  "amount": {"max": {"value": None, "txId": None},
+                                                             "min": {"value": None, "txId": None},
+                                                             "total": 0},
+                                                  "size": {"max": {"value": None, "txId": None},
+                                                           "min": {"value": None, "txId": None},
+                                                           "total": 0},
+                                                  "vSize": {"max": {"value": None, "txId": None},
+                                                            "min": {"value": None, "txId": None},
+                                                            "total": 0},
+                                                  "fee": {"max": {"value": None, "txId": None},
+                                                          "min": {"value": None, "txId": None},
+                                                          "total": 0},
+                                                  "feeRate": {"max": {"value": None, "txId": None},
+                                                              "min": {"value": None, "txId": None}},
+                                                  "amountMap": {},
+                                                  "feeRateMap": {},
+                                                  "typeMap": {"segwit": {"count": 0,
+                                                                         "amount": 0,
+                                                                         "size": 0},
+                                                              "rbf": {"count": 0,
+                                                                      "amount": 0,
+                                                                      "size": 0}}}
+                              }
+
+
             if self.transaction:
                 if self.merkle_proof:
                     m_tree = merkle_tree(hash_list)
@@ -647,9 +694,23 @@ class App:
                 else:
                     transaction_columns = ["pointer", "tx_id", "timestamp", "raw_transaction"]
                 qt2 = time.time()
+
                 # unconfirmed_transaction table
-                rows = await conn.fetch("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1) "
-                                        "RETURNING  tx_id, raw_transaction, timestamp;", hash_list)
+                if self.blockchain_analytica:
+                    rows = await conn.fetch("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1) "
+                                            "RETURNING  tx_id,"
+                                            "           raw_transaction,"
+                                            "           timestamp,"
+                                            "           size,"
+                                            "           b_size,"
+                                            "           rbf,"
+                                            "           fee,"
+                                            "           feeRate,"
+                                            "           amount,"
+                                            "           segwit;", hash_list)
+                else:
+                    rows = await conn.fetch("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1) "
+                                            "RETURNING  tx_id, raw_transaction, timestamp;", hash_list)
                 dutx = round(time.time() - qt2, 2)
 
                 batch = []
@@ -666,6 +727,78 @@ class App:
                                       row["tx_id"],
                                       row["timestamp"],
                                       row["raw_transaction"]))
+                    if self.blockchain_analytica:
+                        tx_stat = block_stat["transactions"]
+                        tx_stat["count"] += 1
+                        v_size = math.ceil((row["b_size"] * 3 + row["size"]) / 4)
+                        tx = {"amount": row["amount"], "size": row["size"], "vSize": v_size,
+                              "segwit": bool(row["segwit"]), "rbf": bool(row["rbf"])}
+                        for k in ("amount", "size", "vSize"):
+                            tx_stat[k]["total"] += tx[k]
+                            if tx_stat[k]["min"]["value"] is None or tx_stat[k]["min"]["value"] > tx[k]:
+                                tx_stat[k]["min"]["value"] = tx[k]
+                                tx_stat[k]["min"]["txId"] = rh2s(row["tx_id"])
+                            if tx_stat[k]["max"]["value"] is None or tx_stat[k]["max"]["value"] < tx[k]:
+                                tx_stat[k]["max"]["value"] = tx[k]
+                                tx_stat[k]["max"]["txId"] = rh2s(row["tx_id"])
+
+                        key = None if row["amount"] == 0 else str(math.floor(math.log10(row["amount"])))
+                        try:
+                            tx_stat["amountMap"][key]["count"] += 1
+                            tx_stat["amountMap"][key]["amount"] += tx["amount"]
+                            tx_stat["amountMap"][key]["size"] += tx["amount"]
+                        except:
+                            tx_stat["amountMap"][key] = {"count": 1,
+                                                         "amount": tx["amount"],
+                                                         "size": tx["amount"]}
+                        if tx["segwit"]:
+                            tx_stat["typeMap"]["segwit"]["count"] += 1
+                            tx_stat["typeMap"]["segwit"]["amount"] += tx["amount"]
+                            tx_stat["typeMap"]["segwit"]["size"] += tx["size"]
+
+                        if tx["rbf"]:
+                            tx_stat["typeMap"]["rbf"]["count"] += 1
+                            tx_stat["typeMap"]["rbf"]["amount"] += tx["amount"]
+                            tx_stat["typeMap"]["rbf"]["size"] += tx["size"]
+                        fee = row["fee"]
+                        feeRate = row["feerate"]
+                        tx_stat["fee"]["total"] += fee
+                        if tx_stat["fee"]["min"]["value"] is None or tx_stat["fee"]["min"]["value"] > fee:
+                            tx_stat["fee"]["min"]["value"] = fee
+                            tx_stat["fee"]["min"]["txId"] = rh2s(row["tx_id"])
+
+                        if tx_stat["fee"]["max"]["value"] is None or tx_stat["fee"]["max"]["value"] < fee:
+                            tx_stat["fee"]["max"]["value"] = fee
+                            tx_stat["fee"]["max"]["txId"] = rh2s(row["tx_id"])
+
+                        if tx_stat["feeRate"]["min"]["value"] is None or tx_stat["feeRate"]["min"]["value"] > feeRate:
+                            if tx_stat["feeRate"]["min"]["value"] is None or \
+                                    tx_stat["feeRate"]["min"]["value"] > 0:
+                                tx_stat["feeRate"]["min"]["value"] = feeRate
+                                tx_stat["feeRate"]["min"]["txId"] = rh2s(row["tx_id"])
+
+                        if tx_stat["feeRate"]["max"]["value"] is None or tx_stat["feeRate"]["max"]["value"] < feeRate:
+                            tx_stat["feeRate"]["max"]["value"] = feeRate
+                            tx_stat["feeRate"]["max"]["txId"] = rh2s(row["tx_id"])
+
+                        key = feeRate
+                        if key > 10 and key < 20:
+                            key = math.floor(key / 2) * 2
+                        elif key > 20 and key < 200:
+                            key = math.floor(key / 10) * 10
+                        elif key > 200:
+                            key = math.floor(key / 25) * 25
+                        try:
+                            tx_stat["feeRateMap"][key]["count"] += 1
+                            tx_stat["feeRateMap"][key]["size"] += tx["size"]
+                            tx_stat["feeRateMap"][key]["vSize"] += tx["vSize"]
+                        except:
+                            tx_stat["feeRateMap"][key] = {"count": 1,
+                                                          "size": tx["size"],
+                                                          "vSize": tx["vSize"]}
+
+
+
                 qt2 = time.time()
                 await conn.copy_records_to_table('transaction', columns=transaction_columns, records=batch)
                 ctx =  round(time.time() - qt2, 2)
@@ -674,7 +807,6 @@ class App:
 
                 # invalid_transaction table
                 if block["mempoolInvalid"]["tx"]:
-                    qt = time.time()
                     if self.mempool_analytica:
                         qt2 = time.time()
                         d_rows = await conn.fetch("DELETE FROM unconfirmed_transaction WHERE tx_id = ANY($1) "
@@ -807,7 +939,39 @@ class App:
                     s_pointer =  (block["height"]<<39)+(index<<20)+s[4]
                     pointer = tx_map_pointer[s[2]]+(1<<19)+bytes_to_int(s[0][32:])
                     stxo.append((pointer, s_pointer, s[5], s[6]))
-                    # print((pointer, s_pointer))
+                    if self.blockchain_analytica:
+                        a = s[6]
+                        in_type = SCRIPT_N_TYPES[s[5][0]]
+                        input_stat = block_stat["inputs"]
+                        input_stat["count"] += 1
+                        input_stat["amount"]["total"] += a
+
+                        if input_stat["amount"]["min"]["value"] is None or \
+                                input_stat["amount"]["min"]["value"] > a:
+                            input_stat["amount"]["min"]["value"] = a
+                            input_stat["amount"]["min"]["txId"] = rh2s(s[2])
+                            input_stat["amount"]["min"]["vIn"] = s[4]
+
+                        if input_stat["amount"]["max"]["value"] is None or \
+                                input_stat["amount"]["max"]["value"] < a:
+                            input_stat["amount"]["max"]["value"] = a
+                            input_stat["amount"]["max"]["txId"] = rh2s(s[2])
+                            input_stat["amount"]["max"]["vIn"] = s[4]
+
+                        key = None if a == 0 else str(math.floor(math.log10(a)))
+                        try:
+                            input_stat["amountMap"][key]["count"] += 1
+                            input_stat["amountMap"][key]["amount"] += a
+                        except:
+                            input_stat["amountMap"][key] = {"count": 1, "amount": a}
+
+                        try:
+                            input_stat["typeMap"][in_type]["count"] += 1
+                            input_stat["typeMap"][in_type]["amount"] += a
+                        except:
+                            input_stat["typeMap"][in_type] = {"count": 1, "amount": a}
+
+
                 qt2 = time.time()
                 await conn.copy_records_to_table('stxo', columns=["pointer", "s_pointer", "address", "amount"],
                                                  records=stxo)
@@ -816,6 +980,40 @@ class App:
                                "Copy to transaction_map %s; "
                                "Select pointers %s; "
                                "Insert into stxo %s;" % (dutxm, cutxm, sptr, cstxo))
+
+                if self.blockchain_analytica:
+                    out_stat = block_stat["outputs"]
+                    for o in block["utxo"]:
+                        out_stat["count"] += 1
+                        a = o[3]
+                        out_type = SCRIPT_N_TYPES[o[2][0]]
+                        out_stat["amount"]["total"] += a
+
+                        if out_stat["amount"]["min"]["value"] is None or \
+                                out_stat["amount"]["min"]["value"] > a:
+                            if a > 0:
+                                out_stat["amount"]["min"]["value"] = a
+                                out_stat["amount"]["min"]["txId"] = rh2s(o[0][:32])
+                                out_stat["amount"]["min"]["vOut"] = bytes_to_int(o[0][32:])
+                        if out_stat["amount"]["max"]["value"] is None or \
+                                out_stat["amount"]["max"]["value"] < a:
+                            out_stat["amount"]["max"]["value"] = a
+                            out_stat["amount"]["max"]["txId"] = rh2s(o[0][:32])
+                            out_stat["amount"]["max"]["vOut"] = bytes_to_int(o[0][32:])
+                        key = None if a == 0 else str(math.floor(math.log10(a)))
+
+                        try:
+                            out_stat["amountMap"][key]["count"] += 1
+                            out_stat["amountMap"][key]["amount"] += a
+                        except:
+                            out_stat["amountMap"][key] = {"count": 1,
+                                                          "amount": a}
+
+                        try:
+                            out_stat["typeMap"][out_type]["count"] += 1
+                            out_stat["typeMap"][out_type]["amount"] += a
+                        except:
+                            out_stat["typeMap"][out_type] = {"count": 1, "amount": a}
 
             # block filters
             if self.block_filters:
@@ -989,30 +1187,16 @@ class App:
                                                            block["header"] + int_to_var_int(len(block["tx"])),
                                                            int(time.time()),
                                                            self.block_best_timestamp)])
+            if self.blockchain_analytica:
+                await conn.copy_records_to_table('block_stat',
+                                                 columns=["height", "block"],
+                                                 records=[(block["height"], json.dumps(block_stat))])
 
         except:
             print(traceback.format_exc())
             raise
         # await asyncio.sleep(10)
         # assert 0
-
-
-    async def mempool_analytica_processor(self):
-        while True:
-            try:
-               pass
-
-
-            except asyncio.CancelledError:
-                self.log.warning("Mempool analytica processor stopped")
-                break
-            except:
-                print(traceback.format_exc())
-
-            await asyncio.sleep(5)
-
-
-
 
 
     async def address_state_processor(self):
@@ -1156,8 +1340,8 @@ class App:
                         if height in self.blocks_stat_batches:
                             h_batch = self.blocks_stat_batches.delete(height)
 
-                            await conn.copy_records_to_table('blocks_stat',
-                                                             columns=["height", "block", "blockchain"],
+                            await conn.copy_records_to_table('block_stat',
+                                                             columns=["height", "block"],
                                                              records=h_batch)
                     if self.connector.app_last_block < height:
                         self.connector.app_last_block = height
@@ -1287,7 +1471,6 @@ if __name__ == '__main__':
     logger.addHandler(ch)
     logger_connector.addHandler(ch)
 
-
     # check config
     try:
         config["CONNECTOR"]["zeromq"]
@@ -1309,11 +1492,8 @@ if __name__ == '__main__':
         config["OPTIONS"]["transaction_history"]
         config["OPTIONS"]["mempool_analytica"]
 
-
-
         if int(config["SYNCHRONIZATION"]["block_preload_workers"]) not in range(1,9):
             raise Exception("SYNCHRONIZATION -> block_preload_workers invalid; acceptable value is [1-8]")
-
 
         if int(config["SYNCHRONIZATION"]["utxo_cache_size"]) < 0:
             raise Exception("SYNCHRONIZATION -> utxo_cache_size invalid; acceptable value is > 0")
@@ -1334,7 +1514,7 @@ if __name__ == '__main__':
         logger.critical("Shutdown")
         logger.critical(str(traceback.format_exc()))
         sys.exit(0)
-    connector_log_level = logging.INFO
+
     logger.setLevel(log_level)
     logger_connector.setLevel(connector_log_level)
     loop = asyncio.get_event_loop()

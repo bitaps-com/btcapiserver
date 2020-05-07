@@ -94,9 +94,9 @@ async def block_utxo(pointer, limit, page, order, app):
 
     return resp
 
-async def block_data_by_pointer(pointer, app):
+async def block_data_by_pointer(pointer, stat, app):
     pool = app["db_pool"]
-    q = time.time()
+    qt = time.time()
     async with pool.acquire() as conn:
         if pointer == 'last':
             stmt = await conn.prepare("SELECT height,"
@@ -187,16 +187,22 @@ async def block_data_by_pointer(pointer, app):
         block["transactionsCount"] = var_int_to_int(row["header"][80:])
         block["coinbase"] = tx["vIn"][0]["scriptSig"].hex()
 
-
+    if stat and app["blockchain_analytica"]:
+        async with pool.acquire() as conn:
+            stat = await conn.fetchval("SELECT block FROM block_stat WHERE height = $1 LIMIT 1;", row["height"])
+        if stat is not None:
+            block["statistics"] = json.loads(stat)
+        else:
+            block["statistics"] = None
 
 
     resp = {"data": block,
-            "time": round(time.time() - q, 4)}
+            "time": round(time.time() - qt, 4)}
     return resp
 
 async def block_transactions(pointer, option_raw_tx, limit, page, order, mode, app):
     pool = app["db_pool"]
-    q = time.time()
+    qt = time.time()
 
     async with pool.acquire() as conn:
         if isinstance(pointer, bytes):
@@ -367,12 +373,12 @@ async def block_transactions(pointer, option_raw_tx, limit, page, order, mode, a
                      "pages": pages,
                      "total": count,
                      "limit": limit},
-            "time": round(time.time() - q, 4)}
+            "time": round(time.time() - qt, 4)}
     return resp
 
 async def block_transaction_id_list(pointer, limit, page, order, app):
     pool = app["db_pool"]
-    q = time.time()
+    qt = time.time()
 
     async with pool.acquire() as conn:
         if isinstance(pointer, bytes):
@@ -392,6 +398,6 @@ async def block_transaction_id_list(pointer, limit, page, order, app):
         transactions = [rh2s(t["tx_id"]) for t in rows]
         app["block_transaction_id_list"][pointer] = transactions
     resp = {"data": transactions,
-            "time": round(time.time() - q, 4)}
+            "time": round(time.time() - qt, 4)}
     return resp
 

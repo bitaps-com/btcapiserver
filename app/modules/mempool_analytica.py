@@ -190,403 +190,413 @@ class MempoolAnalytica():
                 txso = set()
                 dbs_outs = set()
                 dbs_set = set()
-                inputs["count"] += len(stxo)
-                for row in stxo:
-                    if stxo_sequence < row["id"]:
-                        stxo_sequence = row["id"]
-                    if row["sequence"] > 0:
-                        dbs_outs.add(row["outpoint"])
-                        dbs_set.add(row["tx_id"])
-                    txsi.add(row["tx_id"])
-                    inputs["amount"]["total"] += row["amount"]
-                    if inputs["amount"]["max"]["value"] is None or \
-                            inputs["amount"]["max"]["value"] < row["amount"]:
-                        inputs["amount"]["max"]["value"] = row["amount"]
-                        inputs["amount"]["max"]["txId"] = rh2s(row["tx_id"])
-
-                    if inputs["amount"]["min"]["value"] is None or \
-                            inputs["amount"]["min"]["value"] > row["amount"]:
-                        inputs["amount"]["min"]["value"] = row["amount"]
-                        inputs["amount"]["min"]["txId"] = rh2s(row["tx_id"])
-
-                    try:
-                        inputs["typeMap"][row["address"][0]]["count"] += 1
-                        inputs["typeMap"][row["address"][0]]["amount"] += row["amount"]
-                    except:
-                        inputs["typeMap"][row["address"][0]] = {"count": 1,
-                                                                          "amount": row["amount"]}
-                    amount = row["amount"]
-                    key = None if amount == 0 else str(math.floor(math.log10(amount)))
-
-                    try:
-                        inputs["amountMap"][key]["count"] += 1
-                        inputs["amountMap"][key]["amount"] += row["amount"]
-                    except:
-                        inputs["amountMap"][key] = {"count": 1, "amount": row["amount"]}
-
-                    try:
-                        key = time.time() - self.block_map_timestamp[row["pointer"] >> 39]
-                        if key < 3600:
-                            key = "1h"
-                        elif key < 43200:
-                            key = "12h"
-                        elif key < 86400:
-                            key = "1d"
-                        elif key < 259200:
-                            key = "3d"
-                        elif key < 604800:
-                            key = "1w"
-                        elif key < 2592000:
-                            key = "1m"
-                        else:
-                            key = "%sy" % (int(key // 31536000) + 1)
-                    except:
-                        key = None
-
-                    try:
-                        inputs["ageMap"][key]["count"] += 1
-                        inputs["ageMap"][key]["amount"] += row["amount"]
-                    except:
-                        inputs["ageMap"][key] = {"count": 1, "amount": row["amount"]}
-
-
-
-                async with self.db_pool.acquire() as conn:
-                    dbs_rows = await conn.fetch("SELECT tx_id, outpoint  "
-                                            "FROM connector_unconfirmed_stxo "
-                                            "WHERE outpoint = ANY($1);", dbs_outs)
-                    out_map= set()
-
-
-                    for row in dbs_rows:
-                        if row["outpoint"] in out_map:
-                            if row["tx_id"] in dbs_set:
-                                dbs.add(row["tx_id"])
-                        else:
-                            out_map.add(row["outpoint"])
-
-
-                l_dbs_size = 0
-                while True:
+                if tx:
+                    inputs["count"] += len(stxo)
                     for row in stxo:
-                        if row["out_tx_id"] in dbs or row["out_tx_id"] in dbs_childs:
-                            if row["tx_id"] not in dbs:
-                                dbs_childs.add(row["tx_id"])
+                        if stxo_sequence < row["id"]:
+                            stxo_sequence = row["id"]
+                        if row["sequence"] > 0:
+                            dbs_outs.add(row["outpoint"])
+                            dbs_set.add(row["tx_id"])
+                        txsi.add(row["tx_id"])
+                        inputs["amount"]["total"] += row["amount"]
+                        if inputs["amount"]["max"]["value"] is None or \
+                                inputs["amount"]["max"]["value"] < row["amount"]:
+                            inputs["amount"]["max"]["value"] = row["amount"]
+                            inputs["amount"]["max"]["txId"] = rh2s(row["tx_id"])
 
-                    if l_dbs_size != len(dbs_childs):
-                        l_dbs_size = len(dbs_childs)
-                    else:
-                        break
+                        if inputs["amount"]["min"]["value"] is None or \
+                                inputs["amount"]["min"]["value"] > row["amount"]:
+                            inputs["amount"]["min"]["value"] = row["amount"]
+                            inputs["amount"]["min"]["txId"] = rh2s(row["tx_id"])
 
-                outputs["count"] += len(utxo)
-                for row in utxo:
-                    if utxo_sequence < row["id"]:
-                        utxo_sequence = row["id"]
-                    txso.add(row["tx_id"])
-                    outputs["amount"]["total"] += row["amount"]
-                    if outputs["amount"]["max"]["value"] is None or \
-                            outputs["amount"]["max"]["value"] < row["amount"]:
-                        outputs["amount"]["max"]["value"] = row["amount"]
-                        outputs["amount"]["max"]["txId"] = rh2s(row["tx_id"])
-
-                    if outputs["amount"]["min"]["value"] is None or \
-                            outputs["amount"]["min"]["value"] > row["amount"]:
-                        if row["amount"] > 0:
-                            outputs["amount"]["min"]["value"] = row["amount"]
-                            outputs["amount"]["min"]["txId"] = rh2s(row["tx_id"])
-                    try:
-                        outputs["typeMap"][row["address"][0]]["count"] += 1
-                        outputs["typeMap"][row["address"][0]]["amount"] += row["amount"]
-                    except:
-                        outputs["typeMap"][row["address"][0]] = {"count": 1,
-                                                                          "amount": row["amount"]}
-                    amount = row["amount"]
-                    key = None if amount == 0 else str(math.floor(math.log10(amount)))
-
-                    try:
-                        outputs["amountMap"][key]["count"] += 1
-                        outputs["amountMap"][key]["amount"] += row["amount"]
-                    except:
-                        outputs["amountMap"][key] = {"count": 1, "amount": row["amount"]}
-
-                transactions["doublespend"]["count"] = len(dbs)
-                transactions["doublespendChilds"]["count"] = len(dbs_childs)
-                transactions["count"] += len(tx)
-                dbs_records = deque()
-
-
-                for row in tx:
-                    v_size = math.ceil((row["b_size"] * 3 + row["size"]) / 4)
-                    if tx_sequence < row["id"]:
-                        tx_sequence = row["id"]
-                    if row["tx_id"] in dbs:
-                        transactions["doublespend"]["amount"] += row["amount"]
-                        transactions["doublespend"]["size"] += row["size"]
-                        transactions["doublespend"]["vSize"] += v_size
-                        dbs_records.append((row["tx_id"], row["timestamp"], 0))
-                    if row["tx_id"] in dbs_childs:
-                        transactions["doublespendChilds"]["amount"] += row["amount"]
-                        transactions["doublespendChilds"]["size"] += row["size"]
-                        transactions["doublespendChilds"]["vSize"] += v_size
-                        dbs_records.append((row["tx_id"], row["timestamp"], 1))
-
-                    if row["amount"] > 0:
-                        transactions["amount"]["total"] += row["amount"]
-                        if transactions["amount"]["max"]["value"] is None or \
-                                transactions["amount"]["max"]["value"] < row["amount"]:
-                            transactions["amount"]["max"]["value"] = row["amount"]
-                            transactions["amount"]["max"]["txId"] = rh2s(row["tx_id"])
-
-                        if transactions["amount"]["min"]["value"] is None or \
-                                transactions["amount"]["min"]["value"] > row["amount"]:
-                            transactions["amount"]["min"]["value"] = row["amount"]
-                            transactions["amount"]["min"]["txId"] = rh2s(row["tx_id"])
-
-                    if row["fee"] is not None:
-                        transactions["fee"]["total"] += row["fee"]
-                        if transactions["fee"]["max"]["value"] is None or \
-                                transactions["fee"]["max"]["value"] < row["fee"]:
-                            transactions["fee"]["max"]["value"] = row["fee"]
-                            transactions["fee"]["max"]["txId"] = rh2s(row["tx_id"])
-
-                        if transactions["fee"]["min"]["value"] is None or \
-                                transactions["fee"]["min"]["value"] > row["fee"]:
-                            transactions["fee"]["min"]["value"] = row["fee"]
-                            transactions["fee"]["min"]["txId"] = rh2s(row["tx_id"])
-
-
-                        fee_rate =  math.ceil(row["fee"] / v_size)
-
-                        if transactions["feeRate"]["max"]["value"] is None or \
-                                transactions["feeRate"]["max"]["value"] < fee_rate:
-                            transactions["feeRate"]["max"]["value"] = fee_rate
-                            transactions["feeRate"]["max"]["txId"] = rh2s(row["tx_id"])
-
-                        if transactions["feeRate"]["min"]["value"] is None or \
-                                transactions["feeRate"]["min"]["value"] > fee_rate:
-                            transactions["feeRate"]["min"]["value"] = fee_rate
-                            transactions["feeRate"]["min"]["txId"] = rh2s(row["tx_id"])
-
-                        key = fee_rate
-                        if key > 10 and key < 20:
-                            key = math.floor(key / 2) * 2
-                        elif key > 20 and  key < 200:
-                            key = math.floor(key / 10) * 10
-                        elif key > 200:
-                            key = math.floor(key / 25) * 25
                         try:
-                            transactions["feeRateMap"][key]["count"] += 1
-                            transactions["feeRateMap"][key]["size"] += row["size"]
-                            transactions["feeRateMap"][key]["vSize"] += v_size
+                            inputs["typeMap"][row["address"][0]]["count"] += 1
+                            inputs["typeMap"][row["address"][0]]["amount"] += row["amount"]
                         except:
-                            transactions["feeRateMap"][key] = {"count": 1,
-                                                               "size": row["size"],
-                                                               "vSize": v_size}
+                            inputs["typeMap"][row["address"][0]] = {"count": 1,
+                                                                              "amount": row["amount"]}
+                        amount = row["amount"]
+                        key = None if amount == 0 else str(math.floor(math.log10(amount)))
 
+                        try:
+                            inputs["amountMap"][key]["count"] += 1
+                            inputs["amountMap"][key]["amount"] += row["amount"]
+                        except:
+                            inputs["amountMap"][key] = {"count": 1, "amount": row["amount"]}
 
-                    if row["rbf"]:
-                        transactions["rbfCount"] += 1
-                    if row["segwit"]:
-                        transactions["segwitCount"] += 1
-                    if row["size"]:
-                        transactions["size"]["total"] += row["size"]
-                        transactions["vSize"]["total"] += v_size
-                        if transactions["size"]["max"]["value"] is None or \
-                                transactions["size"]["max"]["value"] < row["size"]:
-                            transactions["size"]["max"]["value"] = row["size"]
-                            transactions["size"]["max"]["txId"] = rh2s(row["tx_id"])
-
-                        if transactions["vSize"]["max"]["value"] is None or \
-                                transactions["vSize"]["max"]["value"] < v_size:
-                            transactions["vSize"]["max"]["value"] = v_size
-                            transactions["vSize"]["max"]["txId"] = rh2s(row["tx_id"])
-
-
-                        if transactions["size"]["min"]["value"] is None or \
-                                transactions["size"]["min"]["value"] > row["size"]:
-                            transactions["size"]["min"]["value"] = row["size"]
-                            transactions["size"]["min"]["txId"] = rh2s(row["tx_id"])
-
-                        if transactions["vSize"]["min"]["value"] is None or \
-                                transactions["vSize"]["min"]["value"] > v_size:
-                            transactions["vSize"]["min"]["value"] = v_size
-                            transactions["vSize"]["min"]["txId"] = rh2s(row["tx_id"])
-
-                if transactions["vSize"]["total"] > 1000000:
-                    transactions["feeRate"]["best"] = round(best_fee, 2)
-                else:
-                    transactions["feeRate"]["best"] = 1
-
-
-
-                async with self.db_pool.acquire() as conn:
-                    async with conn.transaction():
-                        if truncate_dbs_table:
-                            await conn.execute("truncate table  mempool_dbs;")
-                            truncate_dbs_table = False
-                        await conn.copy_records_to_table('mempool_dbs',
-                                                         columns=["tx_id", "timestamp", "child"],
-                                                         records=dbs_records)
-
-                        s_minute = int(time.time()) // 60
-                        if s_minute % 60 == 0 and self.last_hour < s_minute // 60:
-                            s_hour = s_minute // 60
-                            self.last_hour = s_hour
-                            if s_hour % 24 == 0 and self.last_day < s_hour // 24:
-                                s_day = s_hour // 24
-                                self.last_day = s_day
+                        try:
+                            key = time.time() - self.block_map_timestamp[row["pointer"] >> 39]
+                            if key < 3600:
+                                key = "1h"
+                            elif key < 43200:
+                                key = "12h"
+                            elif key < 86400:
+                                key = "1d"
+                            elif key < 259200:
+                                key = "3d"
+                            elif key < 604800:
+                                key = "1w"
+                            elif key < 2592000:
+                                key = "1m"
                             else:
-                                s_day = None
+                                key = "%sy" % (int(key // 31536000) + 1)
+                        except:
+                            key = None
+
+                        try:
+                            inputs["ageMap"][key]["count"] += 1
+                            inputs["ageMap"][key]["amount"] += row["amount"]
+                        except:
+                            inputs["ageMap"][key] = {"count": 1, "amount": row["amount"]}
+
+
+
+                    async with self.db_pool.acquire() as conn:
+                        dbs_rows = await conn.fetch("SELECT tx_id, outpoint  "
+                                                "FROM connector_unconfirmed_stxo "
+                                                "WHERE outpoint = ANY($1);", dbs_outs)
+                        out_map= set()
+
+
+                        for row in dbs_rows:
+                            if row["outpoint"] in out_map:
+                                if row["tx_id"] in dbs_set:
+                                    dbs.add(row["tx_id"])
+                            else:
+                                out_map.add(row["outpoint"])
+
+
+                    l_dbs_size = 0
+                    while True:
+                        for row in stxo:
+                            if row["out_tx_id"] in dbs or row["out_tx_id"] in dbs_childs:
+                                if row["tx_id"] not in dbs:
+                                    dbs_childs.add(row["tx_id"])
+
+                        if l_dbs_size != len(dbs_childs):
+                            l_dbs_size = len(dbs_childs)
                         else:
-                            s_hour = None
-                            s_day = None
+                            break
 
-                        if self.last_minute != s_minute or transactions["feeRate"]["bestHourly"] == 1:
-                            best_fee_hourly.set(transactions["feeRate"]["best"])
-                            f = 0
-                            for i in best_fee_hourly.items:
-                                f += i
-                            f4 = 0
-                            for i in best_fee_4h.items:
-                                f4 += i
-                            transactions["feeRate"]["bestHourly"] = round(f / len(best_fee_hourly.items), 2)
-                            transactions["feeRate"]["best4h"] = round(f4 / len(best_fee_4h.items), 2)
+                    outputs["count"] += len(utxo)
+                    for row in utxo:
+                        if utxo_sequence < row["id"]:
+                            utxo_sequence = row["id"]
+                        txso.add(row["tx_id"])
+                        outputs["amount"]["total"] += row["amount"]
+                        if outputs["amount"]["max"]["value"] is None or \
+                                outputs["amount"]["max"]["value"] < row["amount"]:
+                            outputs["amount"]["max"]["value"] = row["amount"]
+                            outputs["amount"]["max"]["txId"] = rh2s(row["tx_id"])
 
-                        await conn.execute("INSERT INTO mempool_analytica "
-                                           "(minute, hour, day, inputs, outputs, transactions)"
-                                           " VALUES "
-                                           "($1, $2, $3, $4, $5, $6) "
-                                           "ON CONFLICT (minute) "
-                                           "DO UPDATE SET "
-                                           " inputs = $4,"
-                                           " outputs = $5, "
-                                           " transactions = $6",
-                                           s_minute,
-                                           s_hour,
-                                           s_day,
-                                           json.dumps(inputs),
-                                           json.dumps(outputs),
-                                           json.dumps(transactions))
+                        if outputs["amount"]["min"]["value"] is None or \
+                                outputs["amount"]["min"]["value"] > row["amount"]:
+                            if row["amount"] > 0:
+                                outputs["amount"]["min"]["value"] = row["amount"]
+                                outputs["amount"]["min"]["txId"] = rh2s(row["tx_id"])
+                        try:
+                            outputs["typeMap"][row["address"][0]]["count"] += 1
+                            outputs["typeMap"][row["address"][0]]["amount"] += row["amount"]
+                        except:
+                            outputs["typeMap"][row["address"][0]] = {"count": 1,
+                                                                              "amount": row["amount"]}
+                        amount = row["amount"]
+                        key = None if amount == 0 else str(math.floor(math.log10(amount)))
 
-                if s_hour is not None:
-                    self.log.warning("Mempool analytica hourly point saved %s" % s_hour)
-                    self.log.info("Mempool transactions %s; STXO : %s; UTXO %s; DBS %s; round time %s;" %
-                                   (transactions["count"],
-                                    inputs["count"],
-                                    outputs["count"],
-                                    transactions["doublespend"]["count"] +
-                                    transactions["doublespendChilds"]["count"], q))
-                q = time.time() - q
-                if q < 1:
-                    await asyncio.sleep(1 - q)
-                if q > 10:
-                    self.log.warning("Mempool analytica is to slow %s" % q)
+                        try:
+                            outputs["amountMap"][key]["count"] += 1
+                            outputs["amountMap"][key]["amount"] += row["amount"]
+                        except:
+                            outputs["amountMap"][key] = {"count": 1, "amount": row["amount"]}
 
-                if self.last_minute != s_minute or transactions["feeRate"]["best4h"] == 1:
-                    self.last_minute = s_minute
-                    self.log.debug("Mempool TX %s; STXO %s; UTXO %s; DBS %s; %s; %s; Best fee  %s/%s/%s; Round time %s;" %
-                                   (transactions["count"],
-                                    inputs["count"],
-                                    outputs["count"],
-                                    transactions["doublespend"]["count"] +
-                                    transactions["doublespendChilds"]["count"],
-                                    format_bytes(transactions["size"]["total"]),
-                                    format_vbytes(transactions["vSize"]["total"]),
-                                    transactions["feeRate"]["best"],
-                                    transactions["feeRate"]["bestHourly"],
-                                    transactions["feeRate"]["best4h"],
-                                    round(q,4)))
+                    transactions["doublespend"]["count"] = len(dbs)
+                    transactions["doublespendChilds"]["count"] = len(dbs_childs)
+                    transactions["count"] += len(tx)
+                    dbs_records = deque()
 
 
-                # assert len(tx) == len(txsi)
-                # assert len(tx) == len(txso)
-                #
-                # async with self.db_pool.acquire() as conn:
-                #     v = await conn.fetch("SELECT invalid_transaction.tx_id FROM  invalid_transaction "
-                #                                 " JOIN connector_unconfirmed_stxo ON connector_unconfirmed_stxo.tx_id = invalid_transaction.tx_id "
-                #                             " ;")
-                #     k = [t["tx_id"] for t in v]
-                #     for t in v:
-                #         print(rh2s(t["tx_id"]))
-                #     v = await conn.fetch("SELECT  outpoint, sequence FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
-                #     print("u", len(v))
-                #     uu = set()
-                #     pp = set()
-                #     for r in v:
-                #         uu.add(r["outpoint"])
-                #         pp.add((r["outpoint"], r["sequence"]))
-                #     v = await conn.fetch("SELECT  outpoint, sequence FROM  invalid_stxo WHERE tx_id = ANY($1);", k)
-                #     print("i", len(v))
-                #     ii = set()
-                #     for r in v:
-                #         ii.add((r["outpoint"], r["sequence"]))
-                #     e = 0
-                #     for i in ii:
-                #         if i[0] not in uu:
-                #             print("none", i[1])
-                #         else:
-                #             e += 1
-                #     print(">>", e)
-                #
-                #     v = await conn.fetch("SELECT  count(*)  from connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
-                #     print("connector_unconfirmed_utxo", v)
-                #     v = await conn.fetch("SELECT  count(*)  from unconfirmed_transaction WHERE tx_id = ANY($1);", k)
-                #     print("unconfirmed_transaction", v)
-                #     v = await conn.fetch("SELECT  count(*)  from unconfirmed_transaction_map WHERE tx_id = ANY($1);", k)
-                #     print("unconfirmed_transaction_map", v)
-                #     ff = 0
-                #     for i in pp:
-                #         v = await conn.fetchval("SELECT  count(*)  from invalid_stxo WHERE outpoint = $1 and sequence = $2;", i[0], i[1])
-                #         ff += v
-                #     print("ff", ff)
-                #     ll = list()
-                #     v = await conn.fetch("SELECT  outpoint, sequence, out_tx_id, tx_id, input_index, address, amount, pointer from connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
-                #     for i in v:
-                #         ll.append((i["outpoint"],
-                #                 i["sequence"],
-                #                 i["out_tx_id"],
-                #                 i["tx_id"],
-                #                 i["input_index"],
-                #                 i["address"],
-                #                 i["amount"],
-                #                 i["pointer"],
-                #                 ))
-                #     print("ll", len(ll))
-                #     try:
-                #         # await conn.copy_records_to_table('invalid_stxo',
-                #         #                                  columns=["outpoint",
-                #         #                                           "sequence",
-                #         #                                           "out_tx_id",
-                #         #                                           "tx_id",
-                #         #                                           "input_index",
-                #         #                                           "address",
-                #         #                                           "amount",
-                #         #                                           "pointer",],
-                #         #                                  records=ll)
-                #         # print("iok")
-                #          ###v = await conn.fetch("DELETE  FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
-                #     except Exception as err:
-                #         print(err)
-                #     await asyncio.sleep(50000)
+                    for row in tx:
+                        v_size = math.ceil((row["b_size"] * 3 + row["size"]) / 4)
+                        if tx_sequence < row["id"]:
+                            tx_sequence = row["id"]
+                        if row["tx_id"] in dbs:
+                            transactions["doublespend"]["amount"] += row["amount"]
+                            transactions["doublespend"]["size"] += row["size"]
+                            transactions["doublespend"]["vSize"] += v_size
+                            dbs_records.append((row["tx_id"], row["timestamp"], 0))
+                        if row["tx_id"] in dbs_childs:
+                            transactions["doublespendChilds"]["amount"] += row["amount"]
+                            transactions["doublespendChilds"]["size"] += row["size"]
+                            transactions["doublespendChilds"]["vSize"] += v_size
+                            dbs_records.append((row["tx_id"], row["timestamp"], 1))
+
+                        if row["amount"] > 0:
+                            transactions["amount"]["total"] += row["amount"]
+                            if transactions["amount"]["max"]["value"] is None or \
+                                    transactions["amount"]["max"]["value"] < row["amount"]:
+                                transactions["amount"]["max"]["value"] = row["amount"]
+                                transactions["amount"]["max"]["txId"] = rh2s(row["tx_id"])
+
+                            if transactions["amount"]["min"]["value"] is None or \
+                                    transactions["amount"]["min"]["value"] > row["amount"]:
+                                transactions["amount"]["min"]["value"] = row["amount"]
+                                transactions["amount"]["min"]["txId"] = rh2s(row["tx_id"])
+
+                        if row["fee"] is not None:
+                            transactions["fee"]["total"] += row["fee"]
+                            if transactions["fee"]["max"]["value"] is None or \
+                                    transactions["fee"]["max"]["value"] < row["fee"]:
+                                transactions["fee"]["max"]["value"] = row["fee"]
+                                transactions["fee"]["max"]["txId"] = rh2s(row["tx_id"])
+
+                            if transactions["fee"]["min"]["value"] is None or \
+                                    transactions["fee"]["min"]["value"] > row["fee"]:
+                                transactions["fee"]["min"]["value"] = row["fee"]
+                                transactions["fee"]["min"]["txId"] = rh2s(row["tx_id"])
+
+
+                            fee_rate =  math.ceil(row["fee"] / v_size)
+
+                            if transactions["feeRate"]["max"]["value"] is None or \
+                                    transactions["feeRate"]["max"]["value"] < fee_rate:
+                                transactions["feeRate"]["max"]["value"] = fee_rate
+                                transactions["feeRate"]["max"]["txId"] = rh2s(row["tx_id"])
+
+                            if transactions["feeRate"]["min"]["value"] is None or \
+                                    transactions["feeRate"]["min"]["value"] > fee_rate:
+                                transactions["feeRate"]["min"]["value"] = fee_rate
+                                transactions["feeRate"]["min"]["txId"] = rh2s(row["tx_id"])
+
+                            key = fee_rate
+                            if key > 10 and key < 20:
+                                key = math.floor(key / 2) * 2
+                            elif key > 20 and  key < 200:
+                                key = math.floor(key / 10) * 10
+                            elif key > 200:
+                                key = math.floor(key / 25) * 25
+                            try:
+                                transactions["feeRateMap"][key]["count"] += 1
+                                transactions["feeRateMap"][key]["size"] += row["size"]
+                                transactions["feeRateMap"][key]["vSize"] += v_size
+                            except:
+                                transactions["feeRateMap"][key] = {"count": 1,
+                                                                   "size": row["size"],
+                                                                   "vSize": v_size}
+
+
+                        if row["rbf"]:
+                            transactions["rbfCount"] += 1
+                        if row["segwit"]:
+                            transactions["segwitCount"] += 1
+                        if row["size"]:
+                            transactions["size"]["total"] += row["size"]
+                            transactions["vSize"]["total"] += v_size
+                            if transactions["size"]["max"]["value"] is None or \
+                                    transactions["size"]["max"]["value"] < row["size"]:
+                                transactions["size"]["max"]["value"] = row["size"]
+                                transactions["size"]["max"]["txId"] = rh2s(row["tx_id"])
+
+                            if transactions["vSize"]["max"]["value"] is None or \
+                                    transactions["vSize"]["max"]["value"] < v_size:
+                                transactions["vSize"]["max"]["value"] = v_size
+                                transactions["vSize"]["max"]["txId"] = rh2s(row["tx_id"])
+
+
+                            if transactions["size"]["min"]["value"] is None or \
+                                    transactions["size"]["min"]["value"] > row["size"]:
+                                transactions["size"]["min"]["value"] = row["size"]
+                                transactions["size"]["min"]["txId"] = rh2s(row["tx_id"])
+
+                            if transactions["vSize"]["min"]["value"] is None or \
+                                    transactions["vSize"]["min"]["value"] > v_size:
+                                transactions["vSize"]["min"]["value"] = v_size
+                                transactions["vSize"]["min"]["txId"] = rh2s(row["tx_id"])
+
+                    if transactions["vSize"]["total"] > 1000000:
+                        transactions["feeRate"]["best"] = round(best_fee, 2)
+                    else:
+                        transactions["feeRate"]["best"] = 1
+
+
+
+                    async with self.db_pool.acquire() as conn:
+                        async with conn.transaction():
+                            if truncate_dbs_table:
+                                await conn.execute("truncate table  mempool_dbs;")
+                                truncate_dbs_table = False
+                            await conn.copy_records_to_table('mempool_dbs',
+                                                             columns=["tx_id", "timestamp", "child"],
+                                                             records=dbs_records)
+
+                            s_minute = int(time.time()) // 60
+                            if s_minute % 60 == 0 and self.last_hour < s_minute // 60:
+                                s_hour = s_minute // 60
+                                self.last_hour = s_hour
+                                if s_hour % 24 == 0 and self.last_day < s_hour // 24:
+                                    s_day = s_hour // 24
+                                    self.last_day = s_day
+                                else:
+                                    s_day = None
+                            else:
+                                s_hour = None
+                                s_day = None
+
+                            if self.last_minute != s_minute or transactions["feeRate"]["bestHourly"] == 1:
+                                best_fee_hourly.set(transactions["feeRate"]["best"])
+                                f = 0
+                                for i in best_fee_hourly.items:
+                                    f += i
+                                f4 = 0
+                                for i in best_fee_4h.items:
+                                    f4 += i
+                                if len(best_fee_hourly.items):
+                                    transactions["feeRate"]["bestHourly"] = round(f / len(best_fee_hourly.items), 2)
+                                else:
+                                    transactions["feeRate"]["bestHourly"] = transactions["feeRate"]["best"]
+
+                                if len(best_fee_4h.items):
+                                    transactions["feeRate"]["best4h"] = round(f4 / len(best_fee_4h.items), 2)
+                                else:
+                                    transactions["feeRate"]["best4h"] = transactions["feeRate"]["best"]
+
+                            await conn.execute("INSERT INTO mempool_analytica "
+                                               "(minute, hour, day, inputs, outputs, transactions)"
+                                               " VALUES "
+                                               "($1, $2, $3, $4, $5, $6) "
+                                               "ON CONFLICT (minute) "
+                                               "DO UPDATE SET "
+                                               " inputs = $4,"
+                                               " outputs = $5, "
+                                               " transactions = $6",
+                                               s_minute,
+                                               s_hour,
+                                               s_day,
+                                               json.dumps(inputs),
+                                               json.dumps(outputs),
+                                               json.dumps(transactions))
+
+                    if s_hour is not None:
+                        self.log.warning("Mempool analytica hourly point saved %s" % s_hour)
+                        self.log.info("Mempool transactions %s; STXO : %s; UTXO %s; DBS %s; round time %s;" %
+                                       (transactions["count"],
+                                        inputs["count"],
+                                        outputs["count"],
+                                        transactions["doublespend"]["count"] +
+                                        transactions["doublespendChilds"]["count"], q))
+                    q = time.time() - q
+                    if q < 1:
+                        await asyncio.sleep(1 - q)
+                    if q > 10:
+                        self.log.warning("Mempool analytica is to slow %s" % q)
+
+                    if self.last_minute != s_minute or transactions["feeRate"]["best4h"] == 1:
+                        self.last_minute = s_minute
+                        self.log.debug("Mempool TX %s; STXO %s; UTXO %s; DBS %s; %s; %s; Best fee  %s/%s/%s; Round time %s;" %
+                                       (transactions["count"],
+                                        inputs["count"],
+                                        outputs["count"],
+                                        transactions["doublespend"]["count"] +
+                                        transactions["doublespendChilds"]["count"],
+                                        format_bytes(transactions["size"]["total"]),
+                                        format_vbytes(transactions["vSize"]["total"]),
+                                        transactions["feeRate"]["best"],
+                                        transactions["feeRate"]["bestHourly"],
+                                        transactions["feeRate"]["best4h"],
+                                        round(q,4)))
+
+
+                    # assert len(tx) == len(txsi)
+                    # assert len(tx) == len(txso)
+                    #
+                    # async with self.db_pool.acquire() as conn:
+                    #     v = await conn.fetch("SELECT invalid_transaction.tx_id FROM  invalid_transaction "
+                    #                                 " JOIN connector_unconfirmed_stxo ON connector_unconfirmed_stxo.tx_id = invalid_transaction.tx_id "
+                    #                             " ;")
+                    #     k = [t["tx_id"] for t in v]
+                    #     for t in v:
+                    #         print(rh2s(t["tx_id"]))
+                    #     v = await conn.fetch("SELECT  outpoint, sequence FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                    #     print("u", len(v))
+                    #     uu = set()
+                    #     pp = set()
+                    #     for r in v:
+                    #         uu.add(r["outpoint"])
+                    #         pp.add((r["outpoint"], r["sequence"]))
+                    #     v = await conn.fetch("SELECT  outpoint, sequence FROM  invalid_stxo WHERE tx_id = ANY($1);", k)
+                    #     print("i", len(v))
+                    #     ii = set()
+                    #     for r in v:
+                    #         ii.add((r["outpoint"], r["sequence"]))
+                    #     e = 0
+                    #     for i in ii:
+                    #         if i[0] not in uu:
+                    #             print("none", i[1])
+                    #         else:
+                    #             e += 1
+                    #     print(">>", e)
+                    #
+                    #     v = await conn.fetch("SELECT  count(*)  from connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
+                    #     print("connector_unconfirmed_utxo", v)
+                    #     v = await conn.fetch("SELECT  count(*)  from unconfirmed_transaction WHERE tx_id = ANY($1);", k)
+                    #     print("unconfirmed_transaction", v)
+                    #     v = await conn.fetch("SELECT  count(*)  from unconfirmed_transaction_map WHERE tx_id = ANY($1);", k)
+                    #     print("unconfirmed_transaction_map", v)
+                    #     ff = 0
+                    #     for i in pp:
+                    #         v = await conn.fetchval("SELECT  count(*)  from invalid_stxo WHERE outpoint = $1 and sequence = $2;", i[0], i[1])
+                    #         ff += v
+                    #     print("ff", ff)
+                    #     ll = list()
+                    #     v = await conn.fetch("SELECT  outpoint, sequence, out_tx_id, tx_id, input_index, address, amount, pointer from connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                    #     for i in v:
+                    #         ll.append((i["outpoint"],
+                    #                 i["sequence"],
+                    #                 i["out_tx_id"],
+                    #                 i["tx_id"],
+                    #                 i["input_index"],
+                    #                 i["address"],
+                    #                 i["amount"],
+                    #                 i["pointer"],
+                    #                 ))
+                    #     print("ll", len(ll))
+                    #     try:
+                    #         # await conn.copy_records_to_table('invalid_stxo',
+                    #         #                                  columns=["outpoint",
+                    #         #                                           "sequence",
+                    #         #                                           "out_tx_id",
+                    #         #                                           "tx_id",
+                    #         #                                           "input_index",
+                    #         #                                           "address",
+                    #         #                                           "amount",
+                    #         #                                           "pointer",],
+                    #         #                                  records=ll)
+                    #         # print("iok")
+                    #          ###v = await conn.fetch("DELETE  FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                    #     except Exception as err:
+                    #         print(err)
+                    #     await asyncio.sleep(50000)
 
 
 
 
 
-                #     v = await conn.fetch("DELETE  FROM  unconfirmed_transaction_map WHERE tx_id = ANY($1);", k)
-                #     print(v)
-                #     # v = await conn.fetch("DELETE  FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
-                #     # print(v)
-                # v = await conn.fetch("SELECT  tx_id FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
-                # print(v)
-                # v = await conn.fetch("SELECT  out_tx_id FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
-                # print(v)
-                # v = await conn.fetch("DELETE  FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
-                # print(v)
-                # v = await conn.fetch("SELECT  out_tx_id FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
-                # print(v)
-                # if v == []:
-                #     await conn.fetch("DELETE  FROM  unconfirmed_transaction WHERE tx_id = ANY($1);", k)
+                    #     v = await conn.fetch("DELETE  FROM  unconfirmed_transaction_map WHERE tx_id = ANY($1);", k)
+                    #     print(v)
+                    #     # v = await conn.fetch("DELETE  FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                    #     # print(v)
+                    # v = await conn.fetch("SELECT  tx_id FROM  connector_unconfirmed_stxo WHERE tx_id = ANY($1);", k)
+                    # print(v)
+                    # v = await conn.fetch("SELECT  out_tx_id FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
+                    # print(v)
+                    # v = await conn.fetch("DELETE  FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
+                    # print(v)
+                    # v = await conn.fetch("SELECT  out_tx_id FROM  connector_unconfirmed_utxo WHERE out_tx_id = ANY($1);", k)
+                    # print(v)
+                    # if v == []:
+                    #     await conn.fetch("DELETE  FROM  unconfirmed_transaction WHERE tx_id = ANY($1);", k)
+                else:
+                    await asyncio.sleep(2)
             except asyncio.CancelledError:
                 self.log.warning("Mempool analytica task canceled")
                 break
