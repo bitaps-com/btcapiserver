@@ -5,7 +5,7 @@ import asyncpg
 from collections import deque
 import time
 import json
-import math
+import math, traceback
 from pybtc import rh2s
 from utils import format_bytes, format_vbytes, ListCache
 
@@ -602,6 +602,7 @@ class MempoolAnalytica():
                 break
             except Exception as err:
                 self.log.error("Mempool analytica task error: %s" % err)
+                print(traceback.format_exc())
                 await asyncio.sleep(10)
 
 
