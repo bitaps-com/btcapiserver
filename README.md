@@ -15,6 +15,8 @@ BTCAPI can be used as a backend for wallets, block explorers, payment processing
 You can run BTCAPI as a self-hosted solution, or use a third-party public host.
 
 
+### Software is still under development, first release will be soon!
+
 ### Requirements
 
 * Python 3.3.3+
