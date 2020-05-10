@@ -1,0 +1,2 @@
+docker container stop btcapi-server
+docker container rm btcapi-server

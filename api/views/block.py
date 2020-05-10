@@ -117,6 +117,17 @@ async def get_block_data_by_pointer(request, pointer=None):
     response = {"error_code": INTERNAL_SERVER_ERROR,
                 "message": "internal server error",
                 "details": ""}
+
+    parameters = request.rel_url.query
+
+    try:
+        if parameters["statistics"] in ('1', 'True'):
+            stat = True
+        else:
+            stat = False
+    except:
+        stat = False
+
     try:
         if pointer is None:
             pointer = request.match_info['block_pointer']
@@ -132,7 +143,7 @@ async def get_block_data_by_pointer(request, pointer=None):
                     raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
             else:
                 raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
-        response = await block_data_by_pointer(pointer, request.app)
+        response = await block_data_by_pointer(pointer, stat, request.app)
         status = 200
     except APIException as err:
         status = err.status

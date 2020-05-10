@@ -219,7 +219,9 @@ async def create_db_model(app, conn):
                                INSERT INTO service (name, value) VALUES ('blockchain_analytica', '1')
                                ON CONFLICT(name) DO NOTHING;
                                """)
-
+        if not app.mempool_analytica:
+            app.log.critical("mempool_analytica option required for blockchain_analytica option enabled")
+            raise Exception("configuration invalid")
         # b = await conn.fetchval("SELECT blockchain FROM blocks_stat ORDER BY height DESC LIMIT 1;")
         # if b is not None:
         #     app.blockchain_stat = json.loads(b)
@@ -347,10 +349,6 @@ async def create_db_model(app, conn):
         #                          }
         #          }
 
-        if app.address_state:
-            app.blockchain_address_sate = {
-
-            }
 
 
 
