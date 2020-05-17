@@ -424,7 +424,7 @@ class App:
             raise
 
     async def orphan_block_handler(self, data, conn):
-        self.log.warning("Remove orphaned block %" %  data["height"])
+        self.log.warning("Remove orphaned block %s" %  data["height"])
         if self.address_state:
             if not self.address_state_process.done():
                 self.log.debug("Wait for address state module block process completed ...")
@@ -471,12 +471,20 @@ class App:
                                     "           timestamp;", data["height"] << 39)
             pointer_map_tx_id = dict()
             batch = []
+            inputs_map = dict()
+            for s in data["stxo"]:
+                try:
+                    inputs_map[s[3]] += s[6]
+                except:
+                    inputs_map[s[3]] = s[6]
 
             for row in rows:
                 pointer_map_tx_id[row["pointer"]] = row["tx_id"]
                 if row["tx_id"] == data["coinbase_tx_id"]: continue
                 if self.mempool_analytica:
                     t = Transaction(row["raw_transaction"], format="raw")
+                    t["fee"] = inputs_map[row["tx_id"]]
+
                     batch.append((row["tx_id"],
                                   row["raw_transaction"],
                                   row["timestamp"],
@@ -486,7 +494,6 @@ class App:
                                   int(t["segwit"]),
                                   t["fee"],
                                   t["amount"]))
-
                 else:
                     batch.append((row["tx_id"],
                                   row["raw_transaction"],
@@ -498,6 +505,7 @@ class App:
                                                           "size", "b_size", "rbf", "segwit", "fee", "amount"],
                                                  records=batch)
                 self.log.debug("Copy to unconfirmed_transaction ...")
+
                 stxo, utxo, outpoints, invalid_tx_set = deque(), deque(), set(), set()
                 utransactions = deque()
                 utransactions_map = deque()
@@ -628,12 +636,16 @@ class App:
                 self.log.debug("Copy to unconfirmed_transaction_map ...")
 
         # blocks table
-
         await conn.execute("DELETE FROM blocks WHERE height = $1;", data["height"])
         self.log.debug("Delete from blocks")
+
+        if self.blockchain_analytica:
+            await conn.execute("DELETE FROM block_stat WHERE height = $1;", data["height"])
+
         if self.block_filters:
             await conn.execute("DELETE FROM block_filters_batch WHERE height = $1;", data["height"])
             await conn.execute("DELETE FROM block_filter WHERE height = $1;", data["height"])
+
 
         if self.address_state:
             if self.address_state_block == data["height"]:
@@ -651,16 +663,14 @@ class App:
                                             "amount": {"max": {"value": None, "txId": None},
                                                        "min": {"value": None, "txId": None},
                                                        "total": 0},
-                                            "typeMap": {},
-                                            "amountMap": {}},
+                                            "typeMap": {}},
                                  "outputs": {"count": 0,
                                              "amount": {"max": {"value": None,
                                                                 "txId": None},
                                                         "min": {"value": None,
                                                                 "txId": None},
                                                         "total": 0},
-                                             "typeMap": {},
-                                             "amountMap": {}},
+                                             "typeMap": {}},
                                  "transactions": {"count": 0,
                                                   "amount": {"max": {"value": None, "txId": None},
                                                              "min": {"value": None, "txId": None},
@@ -685,7 +695,6 @@ class App:
                                                                       "amount": 0,
                                                                       "size": 0}}}
                               }
-
 
             if self.transaction:
                 if self.merkle_proof:
@@ -716,16 +725,20 @@ class App:
                 batch = []
                 for row in rows:
                     index = block["tx"].index(rh2s(row["tx_id"]))
+                    if block["time"]>row["timestamp"]:
+                        tms = row["timestamp"]
+                    else:
+                        tms = block["time"]
                     if self.merkle_proof:
                         batch.append(((block["height"] << 39) + (index << 20),
                                       row["tx_id"],
-                                      row["timestamp"],
+                                      tms,
                                       row["raw_transaction"],
                                       b''.join(merkle_proof(m_tree, index, return_hex=False))))
                     else:
                         batch.append(((block["height"] << 39) + (index << 20),
                                       row["tx_id"],
-                                      row["timestamp"],
+                                      tms,
                                       row["raw_transaction"]))
                     if self.blockchain_analytica:
                         tx_stat = block_stat["transactions"]
@@ -733,6 +746,7 @@ class App:
                         v_size = math.ceil((row["b_size"] * 3 + row["size"]) / 4)
                         tx = {"amount": row["amount"], "size": row["size"], "vSize": v_size,
                               "segwit": bool(row["segwit"]), "rbf": bool(row["rbf"])}
+
                         for k in ("amount", "size", "vSize"):
                             tx_stat[k]["total"] += tx[k]
                             if tx_stat[k]["min"]["value"] is None or tx_stat[k]["min"]["value"] > tx[k]:
@@ -746,11 +760,11 @@ class App:
                         try:
                             tx_stat["amountMap"][key]["count"] += 1
                             tx_stat["amountMap"][key]["amount"] += tx["amount"]
-                            tx_stat["amountMap"][key]["size"] += tx["amount"]
+                            tx_stat["amountMap"][key]["size"] += tx["size"]
                         except:
                             tx_stat["amountMap"][key] = {"count": 1,
                                                          "amount": tx["amount"],
-                                                         "size": tx["amount"]}
+                                                         "size": tx["size"]}
                         if tx["segwit"]:
                             tx_stat["typeMap"]["segwit"]["count"] += 1
                             tx_stat["typeMap"]["segwit"]["amount"] += tx["amount"]
@@ -764,22 +778,24 @@ class App:
                         feeRate = row["feerate"]
                         tx_stat["fee"]["total"] += fee
                         if tx_stat["fee"]["min"]["value"] is None or tx_stat["fee"]["min"]["value"] > fee:
-                            tx_stat["fee"]["min"]["value"] = fee
-                            tx_stat["fee"]["min"]["txId"] = rh2s(row["tx_id"])
+                            if fee > 0:
+                                tx_stat["fee"]["min"]["value"] = fee
+                                tx_stat["fee"]["min"]["txId"] = rh2s(row["tx_id"])
 
                         if tx_stat["fee"]["max"]["value"] is None or tx_stat["fee"]["max"]["value"] < fee:
-                            tx_stat["fee"]["max"]["value"] = fee
-                            tx_stat["fee"]["max"]["txId"] = rh2s(row["tx_id"])
+                            if fee > 0:
+                                tx_stat["fee"]["max"]["value"] = fee
+                                tx_stat["fee"]["max"]["txId"] = rh2s(row["tx_id"])
 
                         if tx_stat["feeRate"]["min"]["value"] is None or tx_stat["feeRate"]["min"]["value"] > feeRate:
-                            if tx_stat["feeRate"]["min"]["value"] is None or \
-                                    tx_stat["feeRate"]["min"]["value"] > 0:
+                            if feeRate > 0:
                                 tx_stat["feeRate"]["min"]["value"] = feeRate
                                 tx_stat["feeRate"]["min"]["txId"] = rh2s(row["tx_id"])
 
                         if tx_stat["feeRate"]["max"]["value"] is None or tx_stat["feeRate"]["max"]["value"] < feeRate:
-                            tx_stat["feeRate"]["max"]["value"] = feeRate
-                            tx_stat["feeRate"]["max"]["txId"] = rh2s(row["tx_id"])
+                            if feeRate > 0:
+                                tx_stat["feeRate"]["max"]["value"] = feeRate
+                                tx_stat["feeRate"]["max"]["txId"] = rh2s(row["tx_id"])
 
                         key = feeRate
                         if key > 10 and key < 20:
@@ -946,12 +962,14 @@ class App:
                         input_stat["count"] += 1
                         input_stat["amount"]["total"] += a
 
+                        # min input
                         if input_stat["amount"]["min"]["value"] is None or \
                                 input_stat["amount"]["min"]["value"] > a:
                             input_stat["amount"]["min"]["value"] = a
                             input_stat["amount"]["min"]["txId"] = rh2s(s[2])
                             input_stat["amount"]["min"]["vIn"] = s[4]
 
+                        # max input
                         if input_stat["amount"]["max"]["value"] is None or \
                                 input_stat["amount"]["max"]["value"] < a:
                             input_stat["amount"]["max"]["value"] = a
@@ -959,17 +977,19 @@ class App:
                             input_stat["amount"]["max"]["vIn"] = s[4]
 
                         key = None if a == 0 else str(math.floor(math.log10(a)))
-                        try:
-                            input_stat["amountMap"][key]["count"] += 1
-                            input_stat["amountMap"][key]["amount"] += a
-                        except:
-                            input_stat["amountMap"][key] = {"count": 1, "amount": a}
 
                         try:
                             input_stat["typeMap"][in_type]["count"] += 1
                             input_stat["typeMap"][in_type]["amount"] += a
                         except:
-                            input_stat["typeMap"][in_type] = {"count": 1, "amount": a}
+                            input_stat["typeMap"][in_type] = {"count": 1, "amount": a, "amountMap": {}}
+
+                        try:
+                            input_stat["typeMap"][in_type]["amountMap"][key]["count"] += 1
+                            input_stat["typeMap"][in_type]["amountMap"][key]["amount"] += a
+                        except:
+                            input_stat["typeMap"][in_type]["amountMap"][key] = {"count": 1, "amount": a}
+
 
 
                 qt2 = time.time()
@@ -1002,24 +1022,24 @@ class App:
                             out_stat["amount"]["max"]["vOut"] = bytes_to_int(o[0][32:])
                         key = None if a == 0 else str(math.floor(math.log10(a)))
 
-                        try:
-                            out_stat["amountMap"][key]["count"] += 1
-                            out_stat["amountMap"][key]["amount"] += a
-                        except:
-                            out_stat["amountMap"][key] = {"count": 1,
-                                                          "amount": a}
 
                         try:
                             out_stat["typeMap"][out_type]["count"] += 1
                             out_stat["typeMap"][out_type]["amount"] += a
                         except:
-                            out_stat["typeMap"][out_type] = {"count": 1, "amount": a}
+                            out_stat["typeMap"][out_type] = {"count": 1, "amount": a, "amountMap": {}}
+
+                        try:
+                            out_stat["typeMap"][out_type]["amountMap"][key]["count"] += 1
+                            out_stat["typeMap"][out_type]["amountMap"][key]["amount"] += a
+                        except:
+                            out_stat["typeMap"][out_type]["amountMap"][key] = {"count": 1, "amount": a}
+
 
             # block filters
             if self.block_filters:
                 r = await conn.fetchval("SELECT data FROM block_filters_batch WHERE height = $1", block['height'] - 1)
                 result = pickle.loads(gzip.decompress(r))
-
 
                 last_hash = result['last_hash']
                 batch_map = result['batch_map']

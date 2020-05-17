@@ -1127,3 +1127,18 @@ async def mempool_state(app):
                      "outputs": outputs,
                      "transactions": transactions},
             "time": round(time.time() - q, 4)}
+
+
+async def fee(app):
+    q = time.time()
+
+
+    async with app["db_pool"].acquire() as conn:
+        row = await conn.fetchrow("SELECT transactions from mempool_analytica  "
+                               " order by minute desc limit 1")
+        fee = json.loads(row["transactions"])["feeRate"]
+        del fee["min"]
+        del fee["max"]
+
+    return {"data": fee,
+            "time": round(time.time() - q, 4)}

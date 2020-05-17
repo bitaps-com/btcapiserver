@@ -28,6 +28,7 @@ from .headers import block_headers
 
 from .mempool import mempool_transactions
 from .mempool import mempool_state
+from .mempool import fee
 from .mempool import invalid_transactions
 from .mempool import mempool_doublespend
 

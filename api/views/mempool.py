@@ -3,9 +3,9 @@ import traceback
 import json
 from model import mempool_transactions
 from model import mempool_state
+from model import fee
 from model import invalid_transactions
 from model import mempool_doublespend
-from utils import APIException
 from utils import APIException
 from utils import INTERNAL_SERVER_ERROR
 
@@ -89,6 +89,32 @@ async def get_mempool_state(request):
             log.error(str(err))
     finally:
         return web.json_response(response, dumps=json.dumps, status=status)
+
+async def get_fee(request):
+    log = request.app["log"]
+    log.info("GET %s" % str(request.rel_url))
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+    try:
+        response = await fee(request.app)
+        status = 200
+
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details}
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status=status)
+
+
 
 async def get_mempool_invalid_transactions(request):
     log = request.app["log"]

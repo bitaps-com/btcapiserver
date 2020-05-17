@@ -71,6 +71,7 @@ def setup_routes(app):
         app.router.add_route('GET', '/rest/mempool/state', get_mempool_state)
         app.router.add_route('GET', '/rest/mempool/invalid/transactions', get_mempool_invalid_transactions)
         app.router.add_route('GET', '/rest/mempool/doublespend/transactions', get_mempool_doublespend_transactions)
+        app.router.add_route('GET', '/rest/mempool/recommended/fee', get_fee)
 
 
     # Address

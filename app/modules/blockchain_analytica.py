@@ -10,10 +10,10 @@ from pybtc import rh2s
 from utils import format_bytes, format_vbytes, ListCache
 
 
-class MempoolAnalytica():
+class BlockchainAnalytica():
 
     def __init__(self, dsn, logger):
-        setproctitle('btcapi server: mempool analytica')
+        setproctitle('btcapi server: blockchain analytica')
         policy = asyncio.get_event_loop_policy()
         policy.set_event_loop(policy.new_event_loop())
         self.dsn = dsn
@@ -35,10 +35,10 @@ class MempoolAnalytica():
     async def start(self):
         try:
             self.db_pool = await asyncpg.create_pool(dsn=self.dsn, min_size=1, max_size=3)
-            self.log.info("Mempool analytica module started")
+            self.log.info("Blockchain analytica module started")
             self.task = self.loop.create_task(self.processor())
         except Exception as err:
-            self.log.warning("Start mempool analytica module failed: %s" % err)
+            self.log.warning("Start blockchain analytica module failed: %s" % err)
             await asyncio.sleep(3)
             self.loop.create_task(self.start())
 
@@ -131,12 +131,13 @@ class MempoolAnalytica():
             rows = await conn.fetch("SELECT minute, transactions->'feeRate'->'best' as best FROM  mempool_analytica "
                                     "order by minute desc LIMIT 240;")
         c = 0
-
+        print(rows)
         for row in rows:
             if row["best"] is not None:
                 if c < 60:
                     best_fee_hourly.set(float(row["best"]))
                 best_fee_4h.set(float(row["best"]))
+                print(row["best"])
             c += 1
 
         while True:
@@ -150,7 +151,7 @@ class MempoolAnalytica():
                         self.log.info("Mempool analytica task started")
                         async with self.db_pool.acquire() as conn:
                             self.last_day = await conn.fetchval("SELECT max(day) FROM  mempool_analytica WHERE day IS NOT NULL ")
-                            self.last_hour = await conn.fetchval("SELECT max(hour) FROM  mempool_analytica WHERE day IS NOT NULL ")
+                            self.last_hour = await conn.fetchval("SELECT max(hour) FROM  mempool_analytica WHERE hour IS NOT NULL ")
                             if self.last_day is None:
                                 self.last_day = 0
                             if self.last_hour  is None:
