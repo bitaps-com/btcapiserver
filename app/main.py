@@ -420,10 +420,29 @@ class App:
     async def orphan_block_handler(self, data, conn):
         self.log.warning("Remove orphaned block %s" %  data["height"])
         if self.address_state:
+            addresses = dict()
             for s in data["stxo"]:
+                addresses[s[5]] = None
                 pass
             for s in data["uutxo"]:
-                pass
+                addresses[s[5]] = None
+            # load address data
+            rows = await conn.fetch("SELECT  address, data FROM address WHERE address = ANY($1);", addresses.keys())
+            for row in rows:
+                addresses[row["address"]] = deserialize_address_data(row["data"])
+
+
+            for s in data["stxo"]:
+
+                rc, ra, c, frp, lra, lrp, \
+                sc, sa, cd, fsp, lsa, lsp = addresses[s[5]]
+
+
+
+
+
+
+
         # transaction table
         if self.transaction:
             self.log.debug("Delete records from transaction table ...")
