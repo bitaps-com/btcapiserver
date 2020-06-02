@@ -265,42 +265,68 @@ async def get_address_state_extended(request):
                 pubkey = await address_state_extended(address, request.app)
 
             if type is None:
+
+                # firstReceivedTxPointer
                 if p2pkh["data"]["firstReceivedTxPointer"] is None and \
                         pubkey["data"]["firstReceivedTxPointer"] is None:
                     frp = None
                 elif p2pkh["data"]["firstReceivedTxPointer"] is not None and \
                         pubkey["data"]["firstReceivedTxPointer"] is not None:
-                    if p2pkh["data"]["firstReceivedTxPointer"] > pubkey["data"]["firstReceivedTxPointer"]:
+                    p1 =  p2pkh["data"]["firstReceivedTxPointer"].split(":")
+                    p2 =  pubkey["data"]["firstReceivedTxPointer"].split(":")
+
+                    p1 = int(p1[0])<<20 + int(p1[1])
+                    p2 = int(p2[0])<<20 + int(p2[1])
+
+                    if p1 > p2:
                         frp = pubkey["data"]["firstReceivedTxPointer"]
                     else:
                         frp = p2pkh["data"]["firstReceivedTxPointer"]
+
                 elif  p2pkh["data"]["firstReceivedTxPointer"] is not None:
                     frp = p2pkh["data"]["firstReceivedTxPointer"]
                 else:
                     frp = pubkey["data"]["firstReceivedTxPointer"]
 
+                # firstSentTxPointer
                 if p2pkh["data"]["firstSentTxPointer"] is None and \
                         pubkey["data"]["firstSentTxPointer"] is None:
                     fsp = None
                 elif p2pkh["data"]["firstSentTxPointer"] is not None and \
                         pubkey["data"]["firstSentTxPointer"] is not None:
-                    if p2pkh["data"]["firstSentTxPointer"] > pubkey["data"]["firstSentTxPointer"]:
+
+                    p1 =  p2pkh["data"]["firstSentTxPointer"].split(":")
+                    p2 =  pubkey["data"]["firstSentTxPointer"].split(":")
+
+                    p1 = int(p1[0])<<20 + int(p1[1])
+                    p2 = int(p2[0])<<20 + int(p2[1])
+
+                    if p1 > p2:
                         fsp = pubkey["data"]["firstSentTxPointer"]
                     else:
                         fsp = p2pkh["data"]["firstSentTxPointer"]
+
                 elif  p2pkh["data"]["firstSentTxPointer"] is not None:
                     fsp = p2pkh["data"]["firstSentTxPointer"]
                 else:
                     fsp = pubkey["data"]["firstSentTxPointer"]
 
-
+                # lastTxPointer
                 if p2pkh["data"]["lastTxPointer"] is None and pubkey["data"]["lastTxPointer"] is None:
                     ltp = None
                 elif p2pkh["data"]["lastTxPointer"] is not None and pubkey["data"]["lastTxPointer"] is not None:
-                    if p2pkh["data"]["lastTxPointer"] > pubkey["data"]["lastTxPointer"]:
-                        ltp = p2pkh["data"]["lastTxPointer"]
-                    else:
+
+                    p1 = p2pkh["data"]["lastTxPointer"].split(":")
+                    p2 = pubkey["data"]["lastTxPointer"].split(":")
+
+                    p1 = int(p1[0]) << 20 + int(p1[1])
+                    p2 = int(p2[0]) << 20 + int(p2[1])
+
+                    if p1 > p2:
                         ltp = pubkey["data"]["lastTxPointer"]
+                    else:
+                        ltp = p2pkh["data"]["lastTxPointer"]
+
                 else:
                     if p2pkh["data"]["lastTxPointer"] is not None:
                         ltp = p2pkh["data"]["lastTxPointer"]
@@ -468,7 +494,7 @@ async def get_address_transactions(request):
             except:
                 raise APIException(PARAMETER_ERROR, "invalid address")
 
-        response = await address_transactions(address, type, limit, page, order, mode, from_block, timeline, request.app)
+        response = await address_transactions(address, type, limit, page, order, mode, timeline, request.app)
         status = 200
     except APIException as err:
         status = err.status

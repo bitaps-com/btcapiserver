@@ -200,33 +200,53 @@ def format_vbytes(size):
     return """%s vGb""" % round(size / (1000 ** 3), 2)
 
 
-def serialize_address_data(received_count, received_amount, coins,
-                                 sent_count, sent_amount, coins_destroyed):
+def serialize_address_data(received_count, received_amount, coins,  frp, lra, lrp,
+                           sent_count, sent_amount, coins_destroyed, fsp, lsa, lsp):
     if sent_count:
         return b"".join((int_to_c_int(received_count),
                          int_to_c_int(received_amount),
                          int_to_c_int(coins),
+                         int_to_c_int(frp),
+                         int_to_c_int(lra),
+                         int_to_c_int(lrp),
+
                          int_to_c_int(sent_count),
                          int_to_c_int(sent_amount),
-                         int_to_c_int(coins_destroyed)))
+                         int_to_c_int(coins_destroyed),
+                         int_to_c_int(fsp),
+                         int_to_c_int(lsa),
+                         int_to_c_int(lsp)
+                         ))
     else:
         return b"".join((int_to_c_int(received_count),
                          int_to_c_int(received_amount),
-                         int_to_c_int(coins)))
+                         int_to_c_int(coins),
+                         int_to_c_int(frp),
+                         int_to_c_int(lra),
+                         int_to_c_int(lrp)))
 
 def deserialize_address_data(data):
         data = get_stream(data)
         received_count = c_int_to_int(read_c_int(data))
         received_amount = c_int_to_int(read_c_int(data))
         coins = c_int_to_int(read_c_int(data))
+        frp = c_int_to_int(read_c_int(data))
+        lra = c_int_to_int(read_c_int(data))
+        lrp = c_int_to_int(read_c_int(data))
         try:
             sent_count = c_int_to_int(read_c_int(data))
             sent_amount = c_int_to_int(read_c_int(data))
             coins_destroyed = c_int_to_int(read_c_int(data))
+            fsp = c_int_to_int(read_c_int(data))
+            lsa = c_int_to_int(read_c_int(data))
+            lsp = c_int_to_int(read_c_int(data))
         except:
             sent_count = 0
             sent_amount = 0
             coins_destroyed = 0
-        return (received_count, received_amount, coins,
-                sent_count, sent_amount, coins_destroyed)
+            fsp = None
+            lsa = None
+            lsp = None
+        return (received_count, received_amount, coins, frp, lra, lrp,
+                sent_count, sent_amount, coins_destroyed, fsp, lsa, lsp)
 

@@ -1,4 +1,8 @@
 import time
+import json
+from utils import APIException
+from utils import NOT_FOUND
+
 
 async def address_list_state(addresses, type, app):
     q = time.time()
@@ -78,4 +82,67 @@ async def address_list_state(addresses, type, app):
     return {"data": r,
             "time": round(time.time() - q, 4)}
 
+
+async def block_addresses_stat(pointer, app):
+    pool = app["db_pool"]
+    q = time.time()
+    async with pool.acquire() as conn:
+        if pointer == 'last':
+            stmt = await conn.prepare("SELECT height,"
+                                      "       addresses "
+                                      "FROM block_address_stat  ORDER BY height desc LIMIT 1;")
+            row = await stmt.fetchrow()
+        else:
+            if type(pointer) == bytes:
+                stmt = await conn.prepare("SELECT height FROM blocks  WHERE hash = $1 LIMIT 1;")
+                row = await stmt.fetchval(pointer)
+                pointer = row
+
+
+            stmt = await conn.prepare("SELECT height, addresses " 
+                                      "FROM block_address_stat  WHERE height = $1 LIMIT 1;")
+            row = await stmt.fetchrow(pointer)
+
+    if row is None:
+        raise APIException(NOT_FOUND, "block not found", status=404)
+
+    block = dict()
+    block["height"] = row["height"]
+    block["statistics"] = json.loads(row["addresses"])
+
+    resp = {"data": block,
+            "time": round(time.time() - q, 4)}
+    return resp
+
+
+async def blockchain_addresses_stat(pointer, app):
+    pool = app["db_pool"]
+    q = time.time()
+    async with pool.acquire() as conn:
+        if pointer == 'last':
+            stmt = await conn.prepare("SELECT height,"
+                                      "       addresses "
+                                      "FROM blockchian_address_stat  ORDER BY height desc LIMIT 1;")
+            row = await stmt.fetchrow()
+        else:
+            if type(pointer) == bytes:
+                stmt = await conn.prepare("SELECT height FROM blocks  WHERE hash = $1 LIMIT 1;")
+                row = await stmt.fetchval(pointer)
+                pointer = row
+
+
+            stmt = await conn.prepare("SELECT height, addresses " 
+                                      "FROM blockchian_address_stat  WHERE height = $1 LIMIT 1;")
+            row = await stmt.fetchrow(pointer)
+
+    if row is None:
+        raise APIException(NOT_FOUND, "block not found", status=404)
+
+    block = dict()
+    block["height"] = row["height"]
+    block["statistics"] = json.loads(row["addresses"])
+
+    resp = {"data": block,
+            "time": round(time.time() - q, 4)}
+    return resp
 

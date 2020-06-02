@@ -1,6 +1,9 @@
 from aiohttp import web
 import traceback
 import json
+from pybtc import s2rh
+from model import blockchain_addresses_stat
+from model import block_addresses_stat
 from model import address_list_state
 from pybtc import address_type
 from pybtc import address_net_type
@@ -10,7 +13,7 @@ from utils import APIException
 from utils import INTERNAL_SERVER_ERROR
 from utils import PARAMETER_ERROR
 from utils import JSON_DECODE_ERROR
-
+from utils import INVALID_BLOCK_POINTER
 
 async def get_address_state_by_list(request):
     log = request.app["log"]
@@ -77,4 +80,80 @@ async def get_address_state_by_list(request):
     finally:
         return web.json_response(response, dumps=json.dumps, status = status)
 
+async def get_block_addresses_stat(request):
+    log = request.app["log"]
+    log.info("GET %s" % str(request.rel_url))
 
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+
+    try:
+        pointer = request.match_info['pointer']
+        if pointer != "last":
+            if len(pointer) < 12:
+                try:
+                    pointer = int(pointer)
+                except:
+                    raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+            elif len(pointer) == 64:
+                try:
+                    pointer = s2rh(pointer)
+                except:
+                    raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+            else:
+                raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+        response = await block_addresses_stat(pointer, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details}
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)
+
+async def get_blockchain_addresses_stat(request):
+    log = request.app["log"]
+    log.info("GET %s" % str(request.rel_url))
+
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+
+    try:
+        pointer = request.match_info['pointer']
+        if pointer != "last":
+            if len(pointer) < 12:
+                try:
+                    pointer = int(pointer)
+                except:
+                    raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+            elif len(pointer) == 64:
+                try:
+                    pointer = s2rh(pointer)
+                except:
+                    raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+            else:
+                raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+        response = await blockchain_addresses_stat(pointer, request.app)
+        status = 200
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details}
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status = status)

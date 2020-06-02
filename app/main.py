@@ -26,6 +26,8 @@ import math
 import db_model
 from modules.filter_compressor import FilterCompressor
 from modules.mempool_analytica import MempoolAnalytica
+from modules.blockchain_analytica import BlockchainAnalyticaAgregator
+from modules.address_state import AddressState
 from utils import log_level_map, deserialize_address_data, serialize_address_data
 
 
@@ -60,6 +62,7 @@ class App:
         self.block_preload_workers = int(config["SYNCHRONIZATION"]["block_preload_workers"])
         self.block_preload_batch_size_limit = int(config["SYNCHRONIZATION"]["block_preload_batch_size"])
         self.utxo_cache_size = int(config["SYNCHRONIZATION"]["utxo_cache_size"])
+        self.address_state_cache_size = int(config["SYNCHRONIZATION"]["address_state_cache_size"])
         self.psql_dsn = config["POSTGRESQL"]["dsn"]
         self.psql_threads = int(config["POSTGRESQL"]["server_threads"])
         self.chain_tail = []
@@ -97,10 +100,6 @@ class App:
 
         self.transaction_map_start_block = 0
         self.start_checkpoint = 0
-        self.address_state_block = 0
-        self.address_state_rollback = 0
-        self.address_state_process = asyncio.Future()
-        self.address_state_process.set_result(True)
         self.block_best_timestamp = 0
 
         self.start_time = int(time.time())
@@ -183,18 +182,14 @@ class App:
         if self.block_filters:
             self.processes.append(Process(target=FilterCompressor, args=(self.psql_dsn, self.log)))
 
-        if self.address_state:
-            pass
-            # self.processes.append(Process(target=AddressStateSync, args=(self.psql_dsn,
-            #                                                              bootstrap_height,
-            #                                                              self.address_timeline,
-            #                                                              self.blockchain_analytica,
-            #                                                              self.log)))
-            # self.tasks.append(self.loop.create_task(self.address_state_processor()))
 
         if self.mempool_analytica:
             self.processes.append(Process(target=MempoolAnalytica, args=(self.psql_dsn, self.log)))
-
+        if self.blockchain_analytica:
+            self.processes.append(Process(target=BlockchainAnalyticaAgregator, args=(self.psql_dsn, self.log)))
+        if self.address_state:
+            self.processes.append(Process(target=AddressState, args=(self.psql_dsn, self.address_state_cache_size,
+                                                                     self.log)))
 
         [p.start() for p in self.processes]
 
@@ -420,47 +415,15 @@ class App:
                                           VALUES ($1, $2, $3);
                                         """, tx["txId"], raw_tx, int(time.time()))
         except:
-            print(traceback.format_exc())
             raise
 
     async def orphan_block_handler(self, data, conn):
         self.log.warning("Remove orphaned block %s" %  data["height"])
         if self.address_state:
-            if not self.address_state_process.done():
-                self.log.debug("Wait for address state module block process completed ...")
-                await self.address_state_process
-
-            # rollback address table in case address table synchronized
-            if self.address_state_block == data["height"]:
-                rows = await conn.fetch("SELECT pointer, address FROM transaction_map "
-                                        "WHERE pointer >= $1 and pointer < $2;", data["height"], data["height"] + 1)
-
-                affected, address, removed, update_records = set(), dict(), set(), list()
-                [affected.add(row["address"]) for row in rows]
-                if affected:
-                    a_rows = await conn.fetch("SELECT address, data FROM address WHERE address = ANY($1)", affected)
-                    for row in a_rows:
-                        address[row["address"]] = deserialize_address_data(row["data"])
-                    for row in rows:
-                        r = 0 if row["pointer"] & 524288 else 1
-                        rc, ra, c, sc, sa, dc = address[row["address"]]
-                        if r: address[row["address"]] = (rc, ra, c, sc - 1, sa - row["amount"], dc - 1)
-                        else: address[row["address"]] = (rc - 1, ra - row["amount"], c - 1, sc, sa, dc)
-                    for a in address:
-                        if address[a][0]: update_records.append((a, serialize_address_data(*address[a])))
-                        else: removed.add(a)
-                    if update_records:
-                        await conn.execute("""
-                                              UPDATE address SET data = r.data
-                                              FROM 
-                                                   (SELECT address, data  FROM
-                                                    UNNEST($1::address[])) AS r 
-                                              WHERE address.address = r.address;
-                                          """, update_records)
-                    if removed: await conn.execute("DELETE FROM address WHERE address = ANY($1);", removed)
-
-                await conn.execute("UPDATE service SET value = $1 WHERE name = 'address_last_block'", str(data["height"]-1))
-
+            for s in data["stxo"]:
+                pass
+            for s in data["uutxo"]:
+                pass
         # transaction table
         if self.transaction:
             self.log.debug("Delete records from transaction table ...")
@@ -641,15 +604,13 @@ class App:
 
         if self.blockchain_analytica:
             await conn.execute("DELETE FROM block_stat WHERE height = $1;", data["height"])
+            await conn.execute("DELETE FROM blockchian_stat WHERE height = $1;", data["height"])
 
         if self.block_filters:
             await conn.execute("DELETE FROM block_filters_batch WHERE height = $1;", data["height"])
             await conn.execute("DELETE FROM block_filter WHERE height = $1;", data["height"])
 
 
-        if self.address_state:
-            if self.address_state_block == data["height"]:
-                self.address_state_block -= 1
         self.log.debug("Completed")
 
     async def new_block_handler(self, block, conn):
@@ -1126,47 +1087,6 @@ class App:
                                                  'batch_map': batch_map,
                                                  'element_index': element_index})))
 
-
-            # if address state table synchronized
-            if self.address_state:
-                if self.address_state_block + 1 == block["height"]:
-                    affected, address, exist = set(), dict(), set()
-                    new_records, update_records = [], []
-                    [affected.add(r[1]) for r in batch]
-
-                    if affected:
-                        a_rows = await conn.fetch("SELECT address, data FROM address  WHERE address = ANY($1)", affected)
-                        for row in a_rows:
-                            address[row["address"]] = deserialize_address_data(row["data"])
-                            exist.add(row["address"])
-                        for row in batch:
-                            r = 0 if row[0] & 524288 else 1
-                            try:
-                                rc, ra, c, sc, sa, dc = address[row[1]]
-                                if r: address[row[1]] = (rc, ra, c, sc + 1, sa + row[1], dc + 1)
-                                else: address[row[1]] = (rc + 1, ra + row[1], c + 1, sc, sa, dc)
-                            except:
-                                if r: address[row[1]] = (0, 0, 0, 1, row[1], 1)
-                                else: address[row[1]] = (1, row[1], 1, 0, 0, 0)
-
-                    for a in exist:
-                        v = address.pop(a)
-                        update_records.append((a, serialize_address_data(*v)))
-                    for a in address:
-                        new_records.append((a, serialize_address_data(*address[a])))
-
-                    if new_records:
-                        await conn.copy_records_to_table('address', columns=["address", "data"], records=new_records)
-                    if update_records:
-                        await conn.execute("""UPDATE address SET data = r.data FROM 
-                                              (SELECT address, data  FROM
-                                                    UNNEST($1::address[])) AS r 
-                                               WHERE address.address = r.address;""", update_records)
-
-                    await conn.execute("""UPDATE service SET value = $1 
-                                          WHERE name = 'address_last_block'; """, str(block["height"]))
-                    self.address_state_block = block["height"]
-
             # blocks table
 
             if self.block_best_timestamp < block["time"]:  self.block_best_timestamp = block["time"]
@@ -1215,99 +1135,7 @@ class App:
         except:
             print(traceback.format_exc())
             raise
-        # await asyncio.sleep(10)
-        # assert 0
 
-
-    async def address_state_processor(self):
-        while True:
-            try:
-                if not self.address_state_block:
-                    async with self.db_pool.acquire() as conn:
-                        b = await conn.fetchval("SELECT value FROM service WHERE name = 'address_last_block' LIMIT 1;")
-                        if b:
-                            self.address_state_block = int(b)
-                        else:
-                            self.address_state_block = 0
-                        await asyncio.sleep(20)
-
-                        continue
-
-                if self.connector.app_last_block > self.address_state_block:
-
-                    if self.connector.active_block.done():
-                        try:
-                            self.address_state_process = asyncio.Future()
-                            async with self.db_pool.acquire() as conn:
-                                rows = await conn.fetch("SELECT pointer, address, amount FROM transaction_map "
-                                                        "WHERE pointer >= $1 and pointer < $2;",
-                                                        (self.address_state_block + 1) << 39,
-                                                        (self.address_state_block + 2) << 39)
-
-                            # day = ceil(self.blocks_map_time[row["pointer"] >> 39] / 86400)
-                            # d = datetime.datetime.fromtimestamp(self.blocks_map_time[row["pointer"] >> 39],
-                            #                                     datetime.timezone.utc)
-                            # month = 12 * d.year + d.month
-
-                            affected, address, exist = set(), dict(), set()
-                            new_records, update_records = [], []
-                            [affected.add(row["address"]) for row in rows]
-
-                            if affected:
-                                async with self.db_pool.acquire() as conn:
-                                    a_rows = await conn.fetch("""
-                                                                 SELECT address, data FROM address  
-                                                                 WHERE address = ANY($1);
-                                                              """, affected)
-                                    for row in a_rows:
-                                        address[row["address"]] = deserialize_address_data(row["data"])
-                                        exist.add(row["address"])
-
-                                for row in rows:
-                                    r = 0 if row["pointer"] & 524288 else 1
-                                    try:
-                                        rc, ra, c, sc, sa, dc = address[row["address"]]
-                                        if r:
-                                            address[row["address"]] = (rc, ra, c, sc + 1, sa + row["amount"], dc + 1)
-                                        else:
-                                            address[row["address"]] = (rc + 1, ra + row["amount"], c + 1, sc, sa, dc)
-                                    except:
-                                            address[row["address"]] = (1, row["amount"], 1, 0, 0, 0)
-
-                            for a in exist:
-                                v = address.pop(a)
-                                update_records.append((a, serialize_address_data(*v)))
-
-                            [new_records.append((a, serialize_address_data(*address[a]))) for a in address]
-                            async with self.db_pool.acquire() as conn:
-                                async with conn.transaction():
-                                    if new_records:
-                                        await conn.copy_records_to_table('address',
-                                                                         columns=["address", "data"],
-                                                                         records=new_records)
-                                    if update_records:
-                                        await conn.execute("""
-                                                              UPDATE address SET data = r.data
-                                                              FROM 
-                                                                   (SELECT address, data  FROM
-                                                                    UNNEST($1::address[])) AS r 
-                                                              WHERE address.address = r.address;
-                                                          """, update_records)
-
-                                    await conn.execute("""
-                                                          UPDATE service SET value = $1
-                                                          WHERE name =  'address_last_block';
-                                                   """, str(self.address_state_block + 1))
-
-                            self.address_state_block += 1
-                        finally:
-                            self.address_state_process.set_result(True)
-                        continue
-
-            except asyncio.CancelledError:
-                self.log.warning("Address state processor stopped")
-                break
-            await asyncio.sleep(5)
 
     async def save_batches(self):
         try:
@@ -1501,6 +1329,7 @@ if __name__ == '__main__':
         config["POSTGRESQL"]["client_threads"]
 
         config["SYNCHRONIZATION"]["utxo_cache_size"]
+        config["SYNCHRONIZATION"]["address_state_cache_size"]
         config["SYNCHRONIZATION"]["block_preload_workers"]
         config["SYNCHRONIZATION"]["block_preload_batch_size"]
 

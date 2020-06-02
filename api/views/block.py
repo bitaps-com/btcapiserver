@@ -6,6 +6,7 @@ from model import block_utxo
 from model import block_data_by_pointer
 from model import block_transactions
 from model import block_transaction_id_list
+from model import blockchain_state
 from pybtc import s2rh
 from utils import APIException
 from utils import INTERNAL_SERVER_ERROR
@@ -295,3 +296,43 @@ async def get_block_transactions_list(request):
             log.error(str(err))
     finally:
         return web.json_response(response, dumps=json.dumps, status = status)
+
+async def get_blockchain_state(request):
+    log = request.app["log"]
+    log.info("GET %s" % str(request.rel_url))
+    status = 500
+    response = {"error_code": INTERNAL_SERVER_ERROR,
+                "message": "internal server error",
+                "details": ""}
+    try:
+        pointer = request.match_info['block_pointer']
+        if pointer != "last":
+            if len(pointer) < 12:
+                try:
+                    pointer = int(pointer)
+                except:
+                    raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+            elif len(pointer) == 64:
+                try:
+                    pointer = s2rh(pointer)
+                except:
+                    raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+            else:
+                raise APIException(INVALID_BLOCK_POINTER, "invalid block pointer")
+
+
+        response = await blockchain_state(pointer, request.app)
+        status = 200
+
+    except APIException as err:
+        status = err.status
+        response = {"error_code": err.err_code,
+                    "message": err.message,
+                    "details": err.details}
+    except Exception as err:
+        if request.app["debug"]:
+            log.error(str(traceback.format_exc()))
+        else:
+            log.error(str(err))
+    finally:
+        return web.json_response(response, dumps=json.dumps, status=status)

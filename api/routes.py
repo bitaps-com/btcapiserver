@@ -29,7 +29,8 @@ def setup_routes(app):
     if app["transaction"]:
         app.router.add_route('GET', '/rest/block/transactions/{block_pointer}', get_block_transactions)
         app.router.add_route('GET', '/rest/block/transaction/id/list/{block_pointer}', get_block_transactions_list)
-
+    if app["blockchain_analytica"]:
+        app.router.add_route('GET', '/rest/blockchain/state/{block_pointer}', get_blockchain_state)
 
     # Blocks
     app.router.add_route('GET', '/rest/blocks/last/{n}', get_last_n_blocks)
@@ -88,7 +89,9 @@ def setup_routes(app):
 
     # Addresses
     app.router.add_route('POST', '/rest/addresses/state/by/address/list', get_address_state_by_list)
-
+    if app["address_state"]:
+        app.router.add_route('GET', '/rest/block/addresses/statistics/{pointer}', get_block_addresses_stat)
+        app.router.add_route('GET', '/rest/blockchain/addresses/statistics/{pointer}', get_blockchain_addresses_stat)
 
     # Default
     app.router.add_route('GET', '/{tail:.*}', about)

@@ -173,10 +173,6 @@ async def create_db_model(app, conn):
     m = await conn.fetchval("SELECT service.value FROM service WHERE service.name ='address_state' LIMIT 1;")
     app.log.info("Option address_state = %s" % m)
 
-    if int(m) == 1 and not app.address_state or app.address_state and int(m) == 0:
-        app.log.critical("address_state config option not match db structure; you should drop db and recreate it.")
-        raise Exception("DB structure invalid")
-
     # address_timeline module
 
     if app.address_timeline:

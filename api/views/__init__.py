@@ -11,6 +11,7 @@ from .block import get_block_data_last
 from .block import get_block_data_by_pointer
 from .block import get_block_transactions
 from .block import get_block_transactions_list
+from .block import get_blockchain_state
 
 from .blocks import get_last_n_blocks
 from .blocks import get_daily_blocks
@@ -43,6 +44,8 @@ from .address import get_address_transactions
 from .address import get_address_unconfirmed_transactions
 
 from .addresses import get_address_state_by_list
+from .addresses import get_block_addresses_stat
+from .addresses import get_blockchain_addresses_stat
 
 from .default import test_filter
 from .default import about

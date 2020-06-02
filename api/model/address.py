@@ -159,54 +159,20 @@ async def address_unconfirmed_utxo(address,  type, order, limit, page, app):
     return {"data": utxo,
             "time": round(time.time() - q, 4)}
 
-async def address_state_extended(address, app):
+async def address_state_extended(address, app, block_height = -1):
     q = time.time()
-    block_height = -1
-    received_outs_count = 0
-    spent_outs_count = 0
-    pending_received_outs_count = 0
-    pending_spent_outs_count = 0
-    pending_received_amount = 0
-    pending_sent_amount = 0
-    pending_received_tx_count = 0
-    pending_sent_tx_count = 0
-    received_amount = 0
-    sent_amount = 0
-    received_tx_count = 0
-    sent_tx_count = 0
+    h = None
     balance = 0
-    frp = None
-    fsp = None
+    rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp = (0, 0, 0, None, None, None,
+                                                           0, 0, 0, None, None, None)
     ltp = None
     type = SCRIPT_N_TYPES[address[0]]
-
-    empty_result = {"balance": 0,
-                    "receivedAmount": 0,
-                    "receivedTxCount": 0,
-                    "sentAmount": 0,
-                    "sentTxCount": 0,
-                    "firstReceivedTxPointer": None,
-                    "firstSentTxPointer": None,
-                    "lastTxPointer": None,
-                    "largestTxAmount": None,
-                    "largestTxPointer": None,
-
-                    "largestSpentTxAmount": None,
-                    "largestSpentTxPointer": None,
-                    "largestReceivedTxAmount": None,
-                    "largestReceivedTxPointer": None,
-
-                    "receivedOutsCount": 0,
-                    "spentOutsCount": 0,
-                    "pendingReceivedAmount": 0,
-                    "pendingSentAmount": 0,
-                    "pendingReceivedTxCount": 0,
-                    "pendingSentTxCount": 0,
-                    "pendingReceivedOutsCount": 0,
-                    "pendingSpentOutsCount": 0,
-                    "type": type}
+    tx_map = dict()
+    pdc, psa, pc, pra, psc, prc = 0, 0, 0, 0, 0, 0
+    stxo, utxo, ustxo, uutxo = [], [], [], []
 
     async with app["db_pool"].acquire() as conn:
+
         if address[0] == 2:
 
             script = await conn.fetchval("SELECT script from connector_p2pk_map "
@@ -214,94 +180,123 @@ async def address_state_extended(address, app):
             if script is None:
                 script = await conn.fetchval("SELECT script from connector_unconfirmed_p2pk_map "
                                              "WHERE address = $1 LIMIT 1;", address[1:])
-            if script is None:
-                return {"data": empty_result,
-                        "time": round(time.time() - q, 4)}
-
-            address = b"\x02" + script
-
-
-        stxo = await conn.fetch("SELECT pointer, s_pointer, amount FROM "
-                                "stxo WHERE address = $1 and s_pointer > $2 ", address, block_height)
-
-        utxo = await conn.fetch("SELECT pointer, amount FROM "
-                                "connector_utxo WHERE address = $1 and pointer > $2 ", address, block_height)
-
-        ustxo = await conn.fetch("SELECT tx_id, amount FROM "
-                                "connector_unconfirmed_stxo WHERE address = $1;", address)
-
-        uutxo = await conn.fetch("SELECT out_tx_id as tx_id, amount FROM "
-                                "connector_unconfirmed_utxo WHERE address = $1;", address)
+            if script is not None:
+                address = b"\x02" + script
+            else:
+                address = None
 
 
+        if address is not None:
+            if app["address_state"]:
+                h = await conn.fetchval("SELECT height FROM  blockchian_address_stat  order by height desc LIMIT 1;")
+                r = await conn.fetchrow("SELECT data  FROM  address WHERE address = $1 LIMIT 1;", address)
+                if r is not None:
+                    rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp = deserialize_address_data(r["data"])
 
-        if not stxo and not utxo and not ustxo and not uutxo:
-            return {"data": empty_result,
-                    "time": round(time.time() - q, 4)}
+                    balance = ra - sa
+                    if frp:
+                        frp =frp << 20
+                    if lrp:
+                        lrp =lrp << 20
+                    if fsp:
+                        fsp =fsp << 20
+                    if lsp:
+                        lsp =lsp << 20
+                    if lsp is not None and lrp is not None:
+                        ltp = lsp if lsp > lrp else lrp
+                    elif lsp is None:
+                        if lrp is not None:
+                            ltp = lrp
+                    else:
+                        if lrp is None:
+                            ltp = lsp
 
-    tx_map = dict()
 
+            if h is not None:
+                block_height = h
+            print(block_height)
+
+
+            print(rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
+
+            stxo = await conn.fetch("SELECT pointer, s_pointer, amount FROM "
+                                    "stxo WHERE address = $1 and s_pointer >= $2 ", address, (block_height + 1)<< 39)
+
+            utxo = await conn.fetch("SELECT pointer, amount FROM "
+                                    "connector_utxo WHERE address = $1 and pointer >= $2 ",
+                                    address, (block_height +1 )<< 39)
+
+            ustxo = await conn.fetch("SELECT tx_id, amount FROM "
+                                    "connector_unconfirmed_stxo WHERE address = $1;", address)
+
+            uutxo = await conn.fetch("SELECT out_tx_id as tx_id, amount FROM "
+                                    "connector_unconfirmed_utxo WHERE address = $1;", address)
+
+    if lsa is None:
+        lsa = 0
+    if lra is None:
+        lra = 0
 
     for row in stxo:
-        spent_outs_count += 1
-        received_outs_count += 1
-        received_amount += row["amount"]
-        sent_amount += row["amount"]
+        sh = row["s_pointer"] >> 39
+        rh = row["pointer"] >> 39
+        if sh > block_height:
+            cd += 1
+            sa += row["amount"]
+            balance -= row["amount"]
+            if not fsp:
+                fsp = row["s_pointer"]
+            try:
+                tx_map[row["s_pointer"] >> 20] -= row["amount"]
+            except:
+                tx_map[row["s_pointer"] >> 20] = 0 - row["amount"]
 
-        if not frp:
-            frp = row["pointer"]
 
-        if not fsp:
-            fsp = row["s_pointer"]
+        if rh > block_height:
+            ra += row["amount"]
+            balance += row["amount"]
+            c += 1
+            if not frp:
+                frp = row["pointer"]
+            try:
+                tx_map[row["pointer"] >> 20] += row["amount"]
+            except:
+                tx_map[row["pointer"] >> 20] = row["amount"]
 
-        try:
-            tx_map[row["s_pointer"] >> 20] -= row["amount"]
-        except:
-            tx_map[row["s_pointer"] >> 20] = 0 - row["amount"]
-        try:
-            tx_map[row["pointer"] >> 20] += row["amount"]
-        except:
-            tx_map[row["pointer"] >> 20] = row["amount"]
-        ltp = row["pointer"]
+
+        if row["pointer"] > row["s_pointer"]:
+            ltp = row["pointer"]
+        else:
+            ltp = row["s_pointer"]
 
 
     for row in utxo:
-        received_outs_count += 1
-        received_amount += row["amount"]
+        c += 1
+        ra += row["amount"]
         balance += row["amount"]
-
         if not frp:
             frp = row["pointer"]
-
         try:
             tx_map[row["pointer"] >> 20] += row["amount"]
         except:
             tx_map[row["pointer"] >> 20] = row["amount"]
-
         if ltp is None or ltp < row["pointer"]:
             ltp = row["pointer"]
 
-
-
-    largest_spent_amount = 0
-    largest_received_amount = 0
-    largest_spent_pointer = None
-    largest_received_pointer = None
-    print(len(tx_map))
     for k in tx_map:
         if tx_map[k] < 0:
-            sent_tx_count += 1
-            if largest_spent_amount > tx_map[k]:
-                largest_spent_amount = tx_map[k]
-                largest_spent_pointer = "%s:%s" %  (k >> 19, k  & 524287)
+            sc += 1
+            if lsa > tx_map[k]:
+                lsa = tx_map[k]
+                lsp = k << 20
         else:
-            received_tx_count += 1
-            if largest_received_amount < tx_map[k]:
-                largest_received_amount = tx_map[k]
-                largest_received_pointer = "%s:%s" %  (k >> 19, k  & 524287)
+            rc += 1
+            if lra < tx_map[k]:
+                lra = tx_map[k]
+                lrp = k << 20
 
-    if largest_spent_amount is not None:
-        largest_spent_amount = abs(largest_spent_amount)
+    if lsa is not None:
+         lsa = abs(lsa)
     if frp:
         frp = "%s:%s" %  (frp >> 39, (frp >> 20) & 524287)
 
@@ -311,14 +306,16 @@ async def address_state_extended(address, app):
     if fsp is not None:
         fsp = "%s:%s" %  (fsp >> 39, (fsp >> 20) & 524287)
 
+    if lsp is not None:
+        lsp = "%s:%s" %  (lsp >> 39, (lsp >> 20) & 524287)
+    if lrp is not None:
+        lrp = "%s:%s" %  (lrp >> 39, (lrp >> 20) & 524287)
 
     tx_map = dict()
 
     for row in ustxo:
-        pending_received_outs_count += 1
-        pending_received_amount += row["amount"]
-        pending_spent_outs_count += 1
-        pending_sent_amount += row["amount"]
+        pdc += 1
+        psa += row["amount"]
 
         try:
             tx_map[row["tx_id"]] -= row["amount"]
@@ -326,44 +323,42 @@ async def address_state_extended(address, app):
             tx_map[row["tx_id"]] = 0 - row["amount"]
 
     for row in uutxo:
-        pending_received_outs_count += 1
-        pending_received_amount += row["amount"]
+        pc += 1
+        pra += row["amount"]
 
         try:
-            tx_map[row["tx_id"]] -= row["amount"]
+            tx_map[row["tx_id"]] += row["amount"]
         except:
-            tx_map[row["tx_id"]] = 0 - row["amount"]
+            tx_map[row["tx_id"]] = row["amount"]
 
     for k in tx_map:
         if tx_map[k] < 0:
-            pending_sent_tx_count += 1
+            psc += 1
         else:
-            pending_received_tx_count += 1
-
+            prc += 1
 
     return {"data": {"balance": balance,
-                     "receivedAmount": received_amount,
-                     "receivedTxCount": received_tx_count,
-                     "sentAmount": sent_amount,
-                     "sentTxCount": sent_tx_count,
+                     "receivedAmount": ra,
+                     "receivedTxCount": rc,
+                     "sentAmount": sa,
+                     "sentTxCount": sc,
                      "firstReceivedTxPointer": frp,
                      "firstSentTxPointer": fsp,
                      "lastTxPointer": ltp,
 
-                     "largestSpentTxAmount": largest_spent_amount,
-                     "largestSpentTxPointer": largest_spent_pointer,
-                     "largestReceivedTxAmount": largest_received_amount,
-                     "largestReceivedTxPointer": largest_received_pointer,
+                     "largestSpentTxAmount": lsa,
+                     "largestSpentTxPointer": lsp,
+                     "largestReceivedTxAmount": lra,
+                     "largestReceivedTxPointer": lrp,
 
-
-                     "receivedOutsCount": received_outs_count,
-                     "spentOutsCount": spent_outs_count,
-                     "pendingReceivedAmount": pending_received_amount,
-                     "pendingSentAmount": pending_sent_amount,
-                     "pendingReceivedTxCount": pending_received_tx_count,
-                     "pendingSentTxCount": pending_sent_tx_count,
-                     "pendingReceivedOutsCount": pending_received_outs_count,
-                     "pendingSpentOutsCount": pending_spent_outs_count,
+                     "receivedOutsCount": c,
+                     "spentOutsCount": cd,
+                     "pendingReceivedAmount": pra,
+                     "pendingSentAmount": psa,
+                     "pendingReceivedTxCount": prc,
+                     "pendingSentTxCount": psc,
+                     "pendingReceivedOutsCount": pc,
+                     "pendingSpentOutsCount": pdc,
                      "type": type
                      },
             "time": round(time.time() - q, 4)}
@@ -401,19 +396,31 @@ async def address_state_extended_in_pointer(address, pointer, app):
                     "receivedOutsCount": 0,
                     "spentOutsCount": 0}
 
+    qw = time.time()
     async with app["db_pool"].acquire() as conn:
+        txo = await conn.fetch("SELECT pointer, s_pointer, amount FROM "
+                                "stxo WHERE address = ANY($1)", address)
+        ctxo = await conn.fetch("SELECT pointer, amount FROM "
+                                "connector_utxo WHERE address = ANY($1);", address)
+    print(time.time()-qw)
+    stxo = []
+    ustxo = []
+    utxo = []
+    p = (pointer >> 20) << 20
 
-        stxo = await conn.fetch("SELECT pointer, s_pointer, amount FROM "
-                                "stxo WHERE address = ANY($1) and s_pointer < $2 ", address, (pointer >> 20) << 20)
-        ustxo = await conn.fetch("SELECT pointer, amount FROM "
-                                "stxo WHERE address = ANY($1) and pointer < $2 ", address, (pointer >> 20) << 20)
+    for t in txo:
+        if t["s_pointer"] < p:
+            stxo.append(t)
+        if t["pointer"] < p:
+            ustxo.append(t)
 
-        utxo = await conn.fetch("SELECT pointer, amount FROM "
-                                "connector_utxo WHERE address = ANY($1) and pointer < $2 ", address,(pointer >> 20) << 20)
+    for t in ctxo:
+        if t["pointer"] < p:
+            utxo.append(t)
 
-        if not stxo and not utxo and not ustxo:
-            return {"data": empty_result,
-                    "time": round(time.time() - q, 4)}
+    if not stxo and not utxo and not ustxo:
+        return {"data": empty_result,
+                "time": round(time.time() - q, 4)}
 
     tx_map = dict()
 
@@ -513,8 +520,9 @@ async def address_state_extended_in_pointer(address, pointer, app):
             "time": round(time.time() - q, 4)}
 
 
-async def address_transactions(address,  type, limit, page, order, mode, from_block, timeline, app):
+async def address_transactions(address,  type, limit, page, order, mode, timeline, app):
     q = time.time()
+    qt = time.time()
     pages = 0
 
     if address[0] == 0 and type is None:
@@ -542,25 +550,40 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
                                 "time": round(time.time() - q, 4)}
             a = [address]
 
-    if from_block:
-        from_block_str = " and transaction_map.pointer >= %s" % (from_block << 39)
-    else:
-        from_block_str = ""
+    print("1", time.time() - qt)
+    qt = time.time()
+
+    pages = 0
+    for z in a:
+        s  = await address_state_extended(z, app)
+        pages += s["data"]["receivedTxCount"] + s["data"]["sentTxCount"]
+    pages = math.ceil(pages / limit)
+
 
     async with app["db_pool"].acquire() as conn:
-        count = await conn.fetchval("SELECT count(pointer) FROM transaction_map "
-                                    "WHERE address = ANY($1) %s;" % from_block_str, a)
-        pages = math.ceil(count / limit)
+        # get total transactions count to determine pages count
+        print("4", time.time() - qt)
+        qt = time.time()
+
+        tx_id_list = await conn.fetch("SELECT  pointer  FROM transaction_map "
+                                      "WHERE address = ANY($1) order by  pointer %s "
+                                      "LIMIT $2 OFFSET $3;" % order , a, limit,  limit * (page - 1))
+        l = [t["pointer"] for t in tx_id_list]
+
+        print("4.1", time.time() - qt)
+        qt = time.time()
+
         rows = await conn.fetch("SELECT  transaction.pointer,"
                                 "        transaction.raw_transaction,"
                                 "        transaction.tx_id,  "
                                 "        transaction.timestamp  "
-                                "FROM transaction_map "
-                                "JOIN transaction on transaction.pointer = transaction_map.pointer "
-                                "WHERE address = ANY($1) %s  "
-                                "order by  transaction_map.pointer %s "
-                                "LIMIT $2 OFFSET $3;" % (from_block_str, order) ,
-                                a, limit,  limit * (page - 1))
+                                "FROM transaction "
+                                "WHERE pointer = ANY($1) "
+                                "order by  pointer %s "
+                                "LIMIT $2 ;" % order ,l, limit)
+
+        print("3", time.time() - qt)
+        qt = time.time()
     target_scripts = []
     tx_list = []
     s_pointers = []
@@ -654,6 +677,8 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
 
         tx_list[i]["outputsAmount"] = tx_list[i]["amount"]
 
+    print("2", time.time() - qt)
+    qt = time.time()
     # get information about spent output coins
     async with app["db_pool"].acquire() as conn:
         rows = await conn.fetch("SELECT   outpoint,"
@@ -682,6 +707,8 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
         for v in rows:
             p_out_map[v["pointer"]] = [{"txId": rh2s(v["tx_id"]),
                                            "vIn": v["s_pointer"] & 0b111111111111111111}]
+    print("1", time.time() - qt)
+    qt = time.time()
 
     for t in range(len(tx_list)):
         if tx_list[t]["blockHeight"] is not None:
@@ -735,7 +762,6 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
         except:
             pass
 
-    print(timeline, len(tx_list))
     if timeline and tx_list:
         tx_pointer= (tx_list[-1]["blockHeight"] << 39) + (tx_list[-1]["blockIndex"] << 20)
         print(tx_list[-1]["blockHeight"])
@@ -777,7 +803,6 @@ async def address_transactions(address,  type, limit, page, order, mode, from_bl
     return {"data": {"page": page,
                      "limit": limit,
                      "pages": pages,
-                     "fromBlock":from_block,
                      "list": tx_list},
             "time": round(time.time() - q, 4)}
 

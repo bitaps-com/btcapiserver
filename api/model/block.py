@@ -401,3 +401,29 @@ async def block_transaction_id_list(pointer, limit, page, order, app):
             "time": round(time.time() - qt, 4)}
     return resp
 
+
+async def blockchain_state(pointer, app):
+    pool = app["db_pool"]
+    qt = time.time()
+    async with pool.acquire() as conn:
+        if pointer == 'last':
+            stmt = await conn.prepare("SELECT blockchian "
+                                      "FROM blockchian_stat  ORDER BY height desc LIMIT 1;")
+            row = await stmt.fetchrow()
+        else:
+            if type(pointer) == bytes:
+                stmt = await conn.prepare("SELECT blockchian "
+                                          "FROM blockchian_stat  WHERE hash = $1 LIMIT 1;")
+                row = await stmt.fetchrow(pointer)
+
+            elif type(pointer) == int:
+                stmt = await conn.prepare("SELECT blockchian "
+                                          "FROM blockchian_stat  WHERE height = $1 LIMIT 1;")
+                row = await stmt.fetchrow(pointer)
+
+        if row is None:
+            raise APIException(NOT_FOUND, "block not found", status=404)
+
+    resp = {"data": json.loads(row["blockchian"]),
+            "time": round(time.time() - qt, 4)}
+    return resp

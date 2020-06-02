@@ -6,12 +6,15 @@ from .address import address_transactions
 from .address import address_unconfirmed_transactions
 
 from .addresses import address_list_state
+from .addresses import block_addresses_stat
+from .addresses import blockchain_addresses_stat
 
 from .block import block_by_pointer
 from .block import block_utxo
 from .block import block_data_by_pointer
 from .block import block_transactions
 from .block import block_transaction_id_list
+from .block import blockchain_state
 
 from .block_filters import block_filters_headers
 from .block_filters import block_filters_batch_headers

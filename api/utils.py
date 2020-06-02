@@ -5,7 +5,7 @@ from pybtc import c_int_len, c_int_to_int, int_to_c_int
 from pybtc import int_to_bytes
 from pybtc import parse_script
 from math import ceil
-
+from pybtc import get_stream, read_c_int
 
 NOT_FOUND = 0
 INTERNAL_SERVER_ERROR = 1
@@ -314,3 +314,32 @@ class Cache():
 
     def len(self):
         return len(self.items)
+
+
+
+def deserialize_address_data(data):
+    data = get_stream(data)
+    received_count = c_int_to_int(read_c_int(data))
+    received_amount = c_int_to_int(read_c_int(data))
+    coins = c_int_to_int(read_c_int(data))
+    frp = c_int_to_int(read_c_int(data))
+    lra = c_int_to_int(read_c_int(data))
+    lrp = c_int_to_int(read_c_int(data))
+    try:
+        sent_count = c_int_to_int(read_c_int(data))
+        sent_amount = c_int_to_int(read_c_int(data))
+        coins_destroyed = c_int_to_int(read_c_int(data))
+        fsp = c_int_to_int(read_c_int(data))
+        lsa = c_int_to_int(read_c_int(data))
+        lsp = c_int_to_int(read_c_int(data))
+    except:
+        sent_count = 0
+        sent_amount = 0
+        coins_destroyed = 0
+        fsp = None
+        lsa = None
+        lsp = None
+    return (received_count, received_amount, coins, frp, lra, lrp,
+            sent_count, sent_amount, coins_destroyed, fsp, lsa, lsp)
+
+

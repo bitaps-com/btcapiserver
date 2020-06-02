@@ -17,6 +17,7 @@ testnet = 0
 block_preload_workers = 6
 block_preload_batch_size = 40000000
 utxo_cache_size = 5000000
+address_state_cache_size = 5000000
 coinbase_maturity = 100
 
 [NODE]
