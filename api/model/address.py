@@ -297,10 +297,10 @@ async def address_state_extended(address, app, block_height = -1):
 
     if lsa is not None:
          lsa = abs(lsa)
-    if frp:
+    if frp  is not None:
         frp = "%s:%s" %  (frp >> 39, (frp >> 20) & 524287)
 
-    if ltp:
+    if ltp  is not None:
         ltp = "%s:%s" %  (ltp >> 39, (ltp >> 20) & 524287)
 
     if fsp is not None:
@@ -490,15 +490,15 @@ async def address_state_extended_in_pointer(address, pointer, app):
 
     if largest_spent_amount is not None:
         largest_spent_amount = abs(largest_spent_amount)
-    if frp:
+    if frp is not None:
         frp = "%s:%s" %  (frp >> 39, (frp >> 20) & 524287)
 
-    if ltp:
+    if ltp  is not None:
         ltp = "%s:%s" %  (ltp >> 19, ltp   & 524287)
 
     if fsp is not None:
         fsp = "%s:%s" %  (fsp >> 39, (fsp >> 20) & 524287)
-
+    print("frp", frp)
 
     return {"data": {"balance": balance,
                      "receivedAmount": received_amount,

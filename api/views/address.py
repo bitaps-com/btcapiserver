@@ -206,6 +206,7 @@ async def get_address_unconfirmed_utxo(request):
 
         response = await address_unconfirmed_utxo(address, type, order, limit, page, request.app)
         status = 200
+
     except APIException as err:
         status = err.status
         response = {"error_code": err.err_code,
@@ -272,6 +273,8 @@ async def get_address_state_extended(request):
                     frp = None
                 elif p2pkh["data"]["firstReceivedTxPointer"] is not None and \
                         pubkey["data"]["firstReceivedTxPointer"] is not None:
+                    print(p2pkh["data"]["firstReceivedTxPointer"])
+                    print(pubkey["data"]["firstReceivedTxPointer"])
                     p1 =  p2pkh["data"]["firstReceivedTxPointer"].split(":")
                     p2 =  pubkey["data"]["firstReceivedTxPointer"].split(":")
 
