@@ -127,8 +127,8 @@ async def create_db_model(app, conn):
                                CREATE TABLE  IF NOT EXISTS transaction_map_%s
                                PARTITION OF transaction_map
                                FOR VALUES WITH (MODULUS %s, REMAINDER %s)
-                               WITH (fillfactor=90);
-                               """ % (i + 1, 50, i))
+                               WITH (fillfactor=100);
+                               """ % (i + 1, 200, i))
 
 
 
