@@ -121,6 +121,17 @@ async def create_db_model(app, conn):
 
         await conn.execute(open("./db_model/sql/transaction_history.sql",
                                 "r", encoding='utf-8').read().replace("\n", ""))
+
+        for i in range(50):
+            await conn.execute("""
+                               CREATE TABLE  IF NOT EXISTS transaction_map_%s
+                               PARTITION OF transaction_map
+                               FOR VALUES WITH (MODULUS %s, REMAINDER %s)
+                               WITH (fillfactor=90);
+                               """ % (i + 1, 50, i))
+
+
+
         await conn.execute("""
                            INSERT INTO service (name, value) VALUES ('transaction_history', '1')  
                            ON CONFLICT(name) DO NOTHING;
@@ -162,6 +173,17 @@ async def create_db_model(app, conn):
                                INSERT INTO service (name, value) VALUES ('address_state', '1')  
                                ON CONFLICT(name) DO NOTHING;
                                """)
+        await conn.execute("""
+                               INSERT INTO service (name, value) VALUES ('address_state_rollback', '0')  
+                               ON CONFLICT(name)  DO UPDATE SET value = '0';
+                               """)
+        # for i in range(50):
+        #     await conn.execute("""
+        #                        CREATE TABLE  IF NOT EXISTS address_%s
+        #                        PARTITION OF address
+        #                        FOR VALUES WITH (MODULUS %s, REMAINDER %s)
+        #                        WITH (fillfactor=90);
+        #                        """ % (i + 1, 50, i))
 
     else:
 
@@ -186,6 +208,8 @@ async def create_db_model(app, conn):
 
         await conn.execute(open("./db_model/sql/address_timeline.sql",
                                 "r", encoding='utf-8').read().replace("\n", ""))
+
+
         await conn.execute("""
                                INSERT INTO service (name, value) VALUES ('address_timeline', '1')
                                ON CONFLICT(name) DO NOTHING;

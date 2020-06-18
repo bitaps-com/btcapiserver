@@ -93,6 +93,11 @@ def setup_routes(app):
         app.router.add_route('GET', '/rest/block/addresses/statistics/{pointer}', get_block_addresses_stat)
         app.router.add_route('GET', '/rest/blockchain/addresses/statistics/{pointer}', get_blockchain_addresses_stat)
 
+
+    # Outpoints
+    app.router.add_route('POST', '/rest/outpoints', get_outpoints_info)
+
+
     # Default
     app.router.add_route('GET', '/{tail:.*}', about)
     app.router.add_route('POST', '/{tail:.*}', about)

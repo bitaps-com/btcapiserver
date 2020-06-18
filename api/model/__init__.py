@@ -51,6 +51,8 @@ from .service import block_map_update
 from .service import block_map_update_task
 from .service import load_block_cache
 
+from .outpoints import outpoints_info
+
 
 
 

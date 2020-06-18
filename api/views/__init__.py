@@ -47,5 +47,7 @@ from .addresses import get_address_state_by_list
 from .addresses import get_block_addresses_stat
 from .addresses import get_blockchain_addresses_stat
 
+from .outpoints import get_outpoints_info
+
 from .default import test_filter
 from .default import about

@@ -214,10 +214,6 @@ async def address_state_extended(address, app, block_height = -1):
 
             if h is not None:
                 block_height = h
-            print(block_height)
-
-
-            print(rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
 
             stxo = await conn.fetch("SELECT pointer, s_pointer, amount FROM "
                                     "stxo WHERE address = $1 and s_pointer >= $2 ", address, (block_height + 1)<< 39)

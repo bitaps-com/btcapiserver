@@ -64,7 +64,7 @@ async def address_list_state(addresses, type, app):
             r[a]["confirmed"] += row["amount"]
         except:
             r[a] = {"confirmed": row["amount"],
-                                            "uconfirmed": 0}
+                                            "unconfirmed": 0}
         utxo[row["outpoint"]] = (a, row["amount"])
 
     async with app["db_pool"].acquire() as conn:
@@ -76,7 +76,7 @@ async def address_list_state(addresses, type, app):
 
     for a in addresses:
         if addresses[a] not in r:
-            r[addresses[a]] = {"confirmed": 0, "uconfirmed": 0}
+            r[addresses[a]] = {"confirmed": 0, "unconfirmed": 0}
 
 
     return {"data": r,

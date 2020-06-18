@@ -28,15 +28,9 @@ class AddressState():
         self.missed_addresses = set()
 
 
-        self.day = 0
-        self.month = 0
-        self.address_daily = dict()
-        self.address_monthly = dict()
-
-        self.blocks_map_time = dict()
 
         self.log = logger
-        self.threads = 10
+        self.threads = 20
         self.cache_limit = 15000000
         self.active = True
         self.db_pool = None
@@ -46,19 +40,9 @@ class AddressState():
         self.last_block = None
         self.batch_last_block = 0
 
-        self.last_pointer = 0
 
-        self.tx_map_limit = 100000
-        self.exist = set()
-
-        self.saved_records = 0
-        self.saved_daily_records = 0
-        self.saved_monthly_records = 0
-        self.updated_records = 0
-        self.timeline_records = 0
         self.loaded_addresses = 0
         self.requested_addresses = 0
-        self.saved_address_stat_records = 0
 
 
         self.loop = asyncio.get_event_loop()
@@ -68,7 +52,8 @@ class AddressState():
 
     async def start(self):
         try:
-            self.db_pool = await asyncpg.create_pool(dsn=self.dsn, min_size=1, max_size=10)
+            self.db_pool = await asyncpg.create_pool(dsn=self.dsn, min_size=1, max_size=30)
+            self.db_pool_2 = await asyncpg.create_pool(dsn=self.dsn, min_size=1, max_size=3)
             self.log.info("Addresses state sync module started")
             self.synchronization_task = self.loop.create_task(self.processor())
         except Exception as err:
@@ -76,88 +61,163 @@ class AddressState():
             await asyncio.sleep(3)
             self.loop.create_task(self.start())
 
+    async def fetch_records(self, query, params):
+        async with self.db_pool_2.acquire() as conn:
+            rows = await conn.fetch(query, *params)
+        return rows
+
+    async def get_records(self, height, limit):
+        q = time.time()
+        stxo_t = self.loop.create_task(self.fetch_records("SELECT address, s_pointer as p, amount as a FROM "
+                                                          "stxo WHERE s_pointer >= $1 and s_pointer < $2 "
+                                                          "order by s_pointer asc",
+                                                          ((height + 1) << 39, (height + 1 + limit + 1) << 39)))
+
+        q = time.time()
+        ustxo_t = self.loop.create_task(self.fetch_records("SELECT address, pointer as p, amount as a "
+                                                           "FROM  stxo WHERE "
+                                                           "pointer >= $1 and pointer < $2  "
+                                                           "order by pointer asc",
+                                                           (
+                                                               (height + 1) << 39, (height + 1 + limit + 1) << 39)))
+
+        q = time.time()
+        utxo_t = self.loop.create_task(self.fetch_records("SELECT address, pointer as p, amount  as a FROM "
+                                                          "connector_utxo WHERE  pointer >= $1 and pointer < $2 "
+                                                          "order by pointer asc",
+                                                          ((height + 1) << 39,
+                                                           (height + 1 + limit + 1) << 39)))
+
+        q = time.time()
+        await asyncio.wait({stxo_t, ustxo_t, utxo_t})
+
+        stxo = stxo_t.result()
+        utxo = utxo_t.result()
+        ustxo = ustxo_t.result()
+        return stxo, utxo, ustxo, height, limit
+
+
+
     async def processor(self):
         blockchain_stat = {"inputs": 0,
                            "outputs": 0,
-                           "reused":  0,
+                           "reused": 0,
                            "amountMap": dict()}
         height = -1
-        limit = 20
-        debug = 0
+        previous_height = -1
+        last_block_height = -1
+        limit = 200
+        debug = 1
+        next_batch = None
+        address_cache = self.address_cache
+        affected_new = self.affected_new
+        affected_existed = self.affected_existed
+        block_stat_records = []
+        blockchain_stat_records = []
+        batch_new = []
+        batch_existed = []
+        commit_task = False
 
         while True:
             try:
+
                 qt = time.time()
+
                 ql = time.time()
+
+                if block_stat_records:
+                    commit = self.loop.create_task(
+                        self.commit_changes(previous_height, block_stat_records, blockchain_stat_records,
+                                            batch_new, batch_existed))
+                    commit_task = True
+                block_stat_records = []
+
                 async with self.db_pool.acquire() as conn:
 
                     if not self.bootstrap_completed:
-                        v = await conn.fetchval("SELECT value FROM  service "
-                                                "WHERE name = 'bootstrap_completed' LIMIT 1;")
+                        v = await conn.fetchval("SELECT value FROM service WHERE name = 'bootstrap_completed' LIMIT 1;")
                         if v == '1':
                             self.bootstrap_completed = True
-                            await conn.fetchval("CREATE INDEX concurrently IF NOT EXISTS  "
-                                                " address_rich_list ON address (balance DESC);")
+
+                        else:
+                            await asyncio.sleep(10)
+                            continue
 
                     async with conn.transaction():
-
-
-                        h = await conn.fetchval("SELECT height  FROM  "
-                                                  "blocks  order by height desc LIMIT 1;")
+                        h = await conn.fetchval("SELECT height  FROM  blocks  order by height desc LIMIT 1;")
                         if h is None:
                             await asyncio.sleep(1)
                             continue
                         max_h = h
 
-                        row = await conn.fetchrow("SELECT height, addresses as b FROM  "
-                                                  "blockchian_address_stat  order by height desc LIMIT 1;")
-                        if row is not None:
-                            blockchain_stat = json.loads(row["b"])
-                            height = row["height"]
+                        if height == -1:
+                            row = await conn.fetchrow("SELECT height, addresses as b FROM  "
+                                                      "blockchian_address_stat  order by height desc LIMIT 1;")
+                            if row is not None:
+                                blockchain_stat = json.loads(row["b"])
+                                height = row["height"]
+                        else:
+                            height = last_block_height
 
-                        if height  + limit  > max_h:
-                            limit = max_h - height
+                    if height + limit > max_h:
+                        limit = max_h - height - 1
 
-                        stxo = await conn.fetch("SELECT address, s_pointer as p, amount as a FROM "
-                                                "stxo WHERE s_pointer >= $1 and s_pointer < $2 "
-                                                "order by s_pointer asc",
-                                                (height + 1) << 39,
-                                                (height + 1 + limit + 1) << 39)
+                if next_batch is None:
+                    stxo, utxo, ustxo, height, recent_limit = await self.get_records(height, limit)
+                else:
+                    await next_batch
+                    stxo, utxo, ustxo, height, recent_limit = next_batch.result()
+                last_block_height = height + 1 + recent_limit
+                first_block_height = height + 1
 
-                        ustxo = await conn.fetch("SELECT address, pointer as p, amount as a FROM  stxo WHERE "
-                                                 "pointer >= $1 and pointer < $2  "
-                                                 "order by pointer asc",
-                                                 (height + 1) << 39,
-                                                 (height + 1 + limit + 1) << 39)
+                if last_block_height + limit > max_h:
+                    limit = last_block_height - height - 1
+                if last_block_height > max_h:
+                    last_block_height = max_h
+                next_batch = self.loop.create_task(self.get_records(last_block_height, limit))
 
-                        utxo = await conn.fetch("SELECT address, pointer as p, amount  as a FROM "
-                                                "connector_utxo WHERE  pointer >= $1 and pointer < $2  "
-                                                 "order by pointer asc",
-                                                 (height + 1) << 39,
-                                                 (height + 1 + limit + 1) << 39)
                 ql = round(time.time() - ql, 2)
+
+
                 if not stxo and not utxo and not ustxo:
+                    try:
+                        await commit
+                    except:
+                        pass
+                    next_batch = None
+                    limit = 1
+                    async with self.db_pool.acquire() as conn:
+                        i = await conn.fetchval("select count(*)  from pg_indexes"
+                                                " where  indexname = 'address_rich_list'")
+                        if i == 0:
+                            self.log.warning("Create index on address table ...")
+                            await conn.fetchval("CREATE INDEX IF NOT EXISTS  "
+                                                " address_rich_list ON address (balance DESC);")
+                            self.log.warning("Create index on address completed")
                     await asyncio.sleep(1)
+
                     continue
 
-
+                qg = time.time()
                 block_stat_records = []
                 blockchain_stat_records = []
                 self.missed_addresses = set()
+                missed_addresses = self.missed_addresses
 
                 for w in (stxo, utxo, ustxo):
                     for i in w:
                         if i["address"][0] in (0, 1, 2, 5, 6):
-                            if not self.address_cache.get(i["address"]):
-                                self.missed_addresses.add(i["address"])
-                l = len(stxo) + len(utxo) + len(ustxo)
-                if l > self.address_cache.get_size():
-                    self.address_cache.set_size(l)
+                            if not address_cache.get(i["address"]):
+                                missed_addresses.add(i["address"])
 
-                len_missed_address = len(self.missed_addresses)
+                l_records = len(stxo) + len(utxo) + len(ustxo)
+                if l_records > address_cache.get_size():
+                    address_cache.set_size(l_records)
 
+                len_missed_address = len(missed_addresses)
 
                 await self.load_addresses()
+                qg = round(time.time() - qg, 2)
 
                 qc = time.time()
                 before_block_balance = dict()
@@ -173,13 +233,13 @@ class AddressState():
                 inputs_reused = 0
                 inputs_new = 0
                 outs_new = 0
-                last_block_height = height + 1 + limit
-                first_block_height = height + 1
+
                 i, y, z = -1, -1, -1
-                ihl, yhl, zhl = first_block_height, first_block_height , first_block_height
+                ihl, yhl, zhl = first_block_height, first_block_height, first_block_height
                 itxl, itx, ztx = -1, -1, -1
                 ytxl, ytx, ztxl = -1, -1, -1
                 zh = first_block_height
+
                 while True:
                     try:
                         i += 1
@@ -191,7 +251,7 @@ class AddressState():
                         i = None
                         ih = last_block_height + 1
 
-                    is_new_block =  ih != ihl or i is None
+                    is_new_block = ih != ihl or i is None
                     is_new_tx = (itxl > -1 and itx != itxl) or i is None
 
                     if is_new_tx:
@@ -199,30 +259,31 @@ class AddressState():
                         for addr in tx_address:
                             try:
                                 rc, ra, c, frp, lra, lrp, \
-                                sc, sa, cd, fsp, lsa, lsp = self.address_cache[addr]
+                                sc, sa, cd, fsp, lsa, lsp = address_cache[addr]
                             except:
                                 rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp = (0, 0, 0, None,
                                                                                        None, None,
                                                                                        0, 0, 0, None,
                                                                                        None, None)
+
                             if addr not in before_block_balance:
-                                before_block_balance[addr] = ra - sa
+                                before_block_balance[addr] = [rc, ra - sa]
                             sc, sa, cd = sc + 1, sa + tx_address[addr][1], cd + tx_address[addr][0]
                             if fsp is None:
-                                fsp, inputs_first_used= itxl, inputs_first_used + 1
+                                fsp, inputs_first_used = itxl, inputs_first_used + 1
                             if sc == 2:
                                 inputs_reused += 1
                             if sc == 1:
                                 inputs_new += 1
                             lsp = itxl
                             lsa = tx_address[addr][1]
-                            self.address_cache[addr] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
+                            address_cache[addr] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
                             if rc == 0:
                                 new_addresses.add(addr)
                             if addr in new_addresses:
-                                self.affected_new[addr] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
+                                affected_new[addr] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
                             else:
-                                self.affected_existed[addr] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
+                                affected_existed[addr] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
                             after_block_balance[addr] = ra - sa
                         tx_address = dict()
 
@@ -238,7 +299,7 @@ class AddressState():
                                 y = None
                                 yh = last_block_height + 1
 
-                            is_new_block =  yh != yhl or y is None
+                            is_new_block = yh != yhl or y is None
                             is_new_tx = (ytxl > -1 and ytx != ytxl) or y is None
 
                             if is_new_tx:
@@ -246,15 +307,15 @@ class AddressState():
                                 for addr in ytx_address:
                                     try:
                                         rc, ra, c, frp, lra, lrp, \
-                                        sc, sa, cd, fsp, lsa, lsp = self.address_cache[addr]
+                                        sc, sa, cd, fsp, lsa, lsp = address_cache[addr]
                                     except:
                                         rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp = (0, 0, 0, None,
-                                                                                                None, None,
-                                                                                                0, 0, 0, None,
-                                                                                                None, None)
-                                    if rc:
-                                        if addr not in before_block_balance:
-                                            before_block_balance[addr] = ra - sa
+                                                                                               None, None,
+                                                                                               0, 0, 0, None,
+                                                                                               None, None)
+
+                                    if addr not in before_block_balance:
+                                        before_block_balance[addr] = [rc, ra - sa]
                                     coins, amount = ytx_address[addr]
                                     rc += 1
                                     ra += amount
@@ -265,12 +326,12 @@ class AddressState():
                                         outs_new += 1
                                     lrp = ytxl
                                     lra = amount
-                                    self.address_cache[addr] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
+                                    address_cache[addr] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
                                     if addr in new_addresses:
-                                        self.affected_new[addr] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
+                                        affected_new[addr] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
                                     else:
-                                        self.affected_existed[addr] = (rc, ra, c, frp, lra, lrp,
-                                                                       sc, sa, cd, fsp, lsa, lsp)
+                                        affected_existed[addr] = (rc, ra, c, frp, lra, lrp,
+                                                                  sc, sa, cd, fsp, lsa, lsp)
                                     after_block_balance[addr] = ra - sa
                                 ytx_address = dict()
 
@@ -293,15 +354,15 @@ class AddressState():
                                         for addr in ztx_address:
                                             try:
                                                 rc, ra, c, frp, lra, lrp, \
-                                                sc, sa, cd, fsp, lsa, lsp = self.address_cache[addr]
+                                                sc, sa, cd, fsp, lsa, lsp = address_cache[addr]
                                             except:
                                                 rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp = (0, 0, 0, None,
                                                                                                        None, None,
                                                                                                        0, 0, 0, None,
                                                                                                        None, None)
-                                            if rc:
-                                                if addr not in before_block_balance:
-                                                    before_block_balance[addr] = ra - sa
+
+                                            if addr not in before_block_balance:
+                                                before_block_balance[addr] = [rc, ra - sa]
                                             coins, amount = ztx_address[addr]
                                             rc += 1
                                             ra += amount
@@ -312,14 +373,14 @@ class AddressState():
                                                 outs_new += 1
                                             lrp = ztxl
                                             lra = amount
-                                            self.address_cache[addr] = (rc, ra, c, frp, lra, lrp,
-                                                                        sc, sa, cd, fsp, lsa, lsp)
+                                            address_cache[addr] = (rc, ra, c, frp, lra, lrp,
+                                                                   sc, sa, cd, fsp, lsa, lsp)
                                             if addr in new_addresses:
-                                                self.affected_new[addr] = (rc, ra, c, frp, lra, lrp,
-                                                                           sc, sa, cd, fsp, lsa, lsp)
+                                                affected_new[addr] = (rc, ra, c, frp, lra, lrp,
+                                                                      sc, sa, cd, fsp, lsa, lsp)
                                             else:
-                                                self.affected_existed[addr] = (rc, ra, c, frp, lra, lrp,
-                                                                               sc, sa, cd, fsp, lsa, lsp)
+                                                affected_existed[addr] = (rc, ra, c, frp, lra, lrp,
+                                                                          sc, sa, cd, fsp, lsa, lsp)
                                             after_block_balance[addr] = ra - sa
                                         ztx_address = dict()
 
@@ -329,17 +390,12 @@ class AddressState():
                                                                                "reused": inputs_reused}},
                                                           "outputs": {"count": {"total": len(out_addresses),
                                                                                 "new": outs_new}},
-                                                          "total": len(input_addresses|out_addresses)}
+                                                          "total": len(input_addresses | out_addresses)}
                                             blockchain_stat["outputs"] += outs_new
                                             blockchain_stat["inputs"] += inputs_new
                                             blockchain_stat["reused"] += inputs_reused
 
                                             for amount in after_block_balance.values():
-                                                if amount < 0:
-                                                    if debug:
-                                                        print("<0", self.address_cache.get_size())
-                                                        for w in after_block_balance:
-                                                            print(w.hex(), after_block_balance[w])
                                                 key = 'null' if amount == 0 else str(floor(log10(amount)))
                                                 try:
                                                     blockchain_stat["amountMap"][key]["amount"] += amount
@@ -347,7 +403,10 @@ class AddressState():
                                                 except:
                                                     blockchain_stat["amountMap"][key] = {"amount": amount, "count": 1}
 
-                                            for amount in before_block_balance.values():
+                                            for v in before_block_balance.values():
+                                                if v[0] == 0:
+                                                    continue
+                                                amount = v[1]
                                                 key = 'null' if amount == 0 else str(floor(log10(amount)))
                                                 blockchain_stat["amountMap"][key]["amount"] -= amount
                                                 blockchain_stat["amountMap"][key]["count"] -= 1
@@ -367,7 +426,7 @@ class AddressState():
                                             before_block_balance = dict()
                                             if zhl >= zh or yhl >= yh:
                                                 break
-
+                                        await asyncio.sleep(0)
 
                                     if z is not None:
                                         # handel output record
@@ -402,11 +461,11 @@ class AddressState():
                                 break
 
                             if is_new_block:
-                                if yhl >= yh and yhl >= ih :
+                                if yhl >= yh and yhl >= ih:
                                     break
 
                             # handel output record
-                            if yh <=zh:
+                            if yh <= zh:
                                 if y is not None and ya[0] in (0, 1, 2, 5, 6):
                                     out_addresses.add(ya)
                                     try:
@@ -422,7 +481,7 @@ class AddressState():
                                 else:
                                     y -= 1
                     # handel input record
-                    if i is not None and ia[0] in (0,1,2,5,6):
+                    if i is not None and ia[0] in (0, 1, 2, 5, 6):
                         input_addresses.add(ia)
                         try:
                             # [coins_destroyed, amount]
@@ -437,99 +496,100 @@ class AddressState():
                             break
 
                 batch_new = deque()
-                while self.affected_new:
-                    a, v = self.affected_new.pop()
+                affected_new_pop = affected_new.pop
+                batch_new_append = batch_new.append
+                while affected_new:
+                    a, v = affected_new_pop()
                     balance = v[1] - v[7]
                     data = serialize_address_data(*v)
-                    batch_new.append((a, balance, data))
+                    batch_new_append((a, balance, data))
                 batch_existed = deque()
-                while self.affected_existed:
-                    a, v = self.affected_existed.pop()
+
+                affected_existed_pop = affected_existed.pop
+                batch_existed_append = batch_existed.append
+                while affected_existed:
+                    a, v = affected_existed_pop()
                     balance = v[1] - v[7]
                     data = serialize_address_data(*v)
-                    batch_existed.append((a, balance, data))
+                    batch_existed_append((a, balance, data))
                 qc = round(time.time() - qc, 2)
 
                 qs = time.time()
-                async with self.db_pool.acquire() as conn:
-                    c = await conn.fetchval(" SELECT n_dead_tup FROM pg_stat_user_tables  "
-                                                       " WHERE relname = 'address' LIMIT 1;")
-                    if c > 50000000:
-                        qm = time.time()
-                        self.log.warning("Address table maintenance ...")
-                        await conn.execute("VACUUM FULL address;")
-                        await conn.execute("ANALYZE address;")
+                previous_height = height
+                if commit_task:
+                    height = await commit
+                else:
+                    height = last_block_height
 
-                        self.log.warning("Address table maintenance completed %s" % round(time.time() - qm, 2))
-
-                    async with conn.transaction():
-                        check_height = await conn.fetchval("SELECT height FROM  "
-                                                           "blockchian_address_stat  order by height desc LIMIT 1 FOR UPDATE;")
-                        if check_height is None:
-                            check_height = -1
-
-                        if check_height != height:
-                            # data changed during process recalculate again
-                            continue
-                        await conn.copy_records_to_table('block_address_stat',
-                                                         columns=["height", "addresses"], records=block_stat_records)
-
-                        await conn.copy_records_to_table('blockchian_address_stat',
-                                                         columns=["height", "addresses"], records=blockchain_stat_records)
-                        n = self.loop.create_task(self.save_records(batch_new))
-                        u = self.loop.create_task(self.update_records(batch_existed))
-                        await asyncio.wait([n, u])
                 qs = round(time.time() - qs, 2)
 
                 qt = round(time.time() - qt, 2)
-                self.log.debug("Address state processor round %s; Get records %s; Computation %s; Save %s" % (qt, ql, qc, qs))
+                self.log.debug(
+                    "Address state processor round %s; Get records %s; Load addresses %s; Computation %s; Save %s" % (
+                    qt, ql, qg, qc, qs))
                 self.log.info("Address state/analytica +%s blocks; last block %s;" % (last_block_height -
-                                                                                          first_block_height + 1,
+                                                                                      first_block_height + 1,
                                                                                       last_block_height))
-                if len_missed_address > 100000:
+                if l_records > 2000000:
                     if limit > 10:
-                        limit -= 1
-                elif len_missed_address < 100000 and limit < 200:
-                    limit += 1
+                        limit -= 2
+                elif len_missed_address < 200000 and limit < 1000:
+                    limit += 2
 
             except asyncio.CancelledError:
                 self.log.warning("Addresses state task canceled")
                 break
             except Exception as err:
+                self.address_cache.clear()
+                self.affected_existed.clear()
+                self.affected_new.clear()
+                self.missed_addresses = set()
+                height = -1
+                commit_task = False
+                next_batch = None
                 self.log.error("Addresses state task error: %s" % err)
                 print(traceback.format_exc())
 
                 await asyncio.sleep(1)
 
-
-
-    async def save_records_batch(self, b):
+    async def commit_changes(self, height, block_stat_records, blockchain_stat_records, batch_new, batch_existed):
         async with self.db_pool.acquire() as conn:
-            await conn.copy_records_to_table('address', columns=["address", "balance", "data"], records=b)
+            c = await conn.fetchval(" SELECT n_dead_tup FROM pg_stat_user_tables  "
+                                    " WHERE relname = 'address' LIMIT 1;")
+            if c and c > 100000000:
+                qm = time.time()
+                self.log.warning("Address table maintenance ...")
+                await conn.execute("VACUUM FULL address;")
+                await conn.execute("ANALYZE address;")
 
-    async def save_records(self, batch):
-        if batch:
-            batches = chunks(batch, self.threads, 10000)
-            b = [self.loop.create_task(self.save_records_batch(b)) for b in batches]
-            await asyncio.wait(b)
-            self.saved_records += len(batch)
+                self.log.warning("Address table maintenance completed %s" % round(time.time() - qm, 2))
 
-    async def update_records(self, batch):
-        if batch:
-            t = time.time()
-            batches = chunks(batch, self.threads, 20000)
-            await asyncio.wait([self.loop.create_task(self.update_records_batch(b)) for b in batches])
-            self.updated_records += len(batch)
+            async with conn.transaction():
+                check_height = await conn.fetchval("SELECT height FROM  "
+                                                   "blockchian_address_stat  order by height desc LIMIT 1 FOR UPDATE;")
 
-    async def update_records_batch(self, batch):
-        async with self.db_pool.acquire() as conn:
-            await conn.execute("""
-                                  UPDATE address SET data = r.data,  balance = r.balance 
-                                  FROM 
-                                  (SELECT address, balance, data FROM UNNEST($1::Address[])) AS r 
-                                  WHERE  address.address = r.address;
-                               """, batch)
+                if check_height is None:
+                    check_height = -1
 
+                if check_height != height:
+                    # data changed during process recalculate again
+                    raise Exception("data changed")
+                await conn.copy_records_to_table('block_address_stat',
+                                                 columns=["height", "addresses"], records=block_stat_records)
+
+                await conn.copy_records_to_table('blockchian_address_stat',
+                                                 columns=["height", "addresses"], records=blockchain_stat_records)
+                await conn.copy_records_to_table('address', columns=["address", "balance", "data"], records=batch_new)
+                await conn.execute("""
+                                      UPDATE address SET data = r.data,  balance = r.balance 
+                                      FROM 
+                                      (SELECT address, balance, data FROM UNNEST($1::Address[])) AS r 
+                                      WHERE  address.address = r.address;
+                                   """, batch_existed)
+                check_height = await conn.fetchval("SELECT height FROM  "
+                                                   "blockchian_address_stat  order by height desc LIMIT 1 FOR UPDATE;")
+
+                return check_height
 
     async def load_addresses_batch(self, batch):
         async with self.db_pool.acquire() as conn:
@@ -551,10 +611,7 @@ class AddressState():
                 count += task.result()
 
         self.loaded_addresses += count
-        self.log.debug("Loaded %s addresses [%s]" % (count, round(time.time()-q, 2)))
-
-
-
+        self.log.debug("Loaded %s addresses [%s]" % (count, round(time.time() - q, 2)))
 
     def terminate(self, a, b):
         self.loop.create_task(self.terminate_coroutine())

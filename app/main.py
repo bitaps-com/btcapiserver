@@ -420,79 +420,94 @@ class App:
     async def orphan_block_handler(self, data, conn):
         self.log.warning("Remove orphaned block %s" %  data["height"])
         if self.address_state:
-            addresses = dict()
-            for s in data["stxo"]:
-                addresses[s[5]] = None
-                pass
-            for s in data["uutxo"]:
-                addresses[s[5]] = None
-            # load address data
-            rows = await conn.fetch("SELECT  address, data FROM address WHERE address = ANY($1);", addresses.keys())
-            for row in rows:
-                addresses[row["address"]] = deserialize_address_data(row["data"])
+            h = await conn.fetchval("SELECT height  FROM  "
+                                    "blockchian_address_stat  order by height desc LIMIT 1;")
+            if h == data["height"]:
+                addresses = dict()
+                for s in data["stxo"]:
+                    if s[5][0] in (0,1,2,5,6):
+                        addresses[s[5]] = None
 
-            tx_map = dict()
-            for s in data["stxo"]:
-                address = s[5]
-                tx_id = s[3]
-                if tx_id not in tx_map:
-                    tx_map[tx_id] = dict()
-                try:
-                    tx_map[tx_id][address][0] += 1
-                    tx_map[tx_id][address][1] += s[6]
-                except:
-                    tx_map[tx_id][address] = [1, s[6]]
+                for s in data["uutxo"]:
+                    if s[2][0] in (0,1,2,5,6):
+                        addresses[s[2]] = None
 
-            for tx_id in tx_map:
-                for address in tx_map[tx_id]:
-                    rc, ra, c, frp, lra, lrp, \
-                    sc, sa, cd, fsp, lsa, lsp = addresses[address]
-                    sa -= tx_map[tx_id][address][1]
-                    cd -= tx_map[tx_id][address][0]
-                    sc -= 1
-                    addresses[address] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
+                # load address data
+                rows = await conn.fetch("SELECT  address, data FROM address WHERE address = ANY($1);", addresses.keys())
+                for row in rows:
+                    addresses[row["address"]] = deserialize_address_data(row["data"])
 
-            tx_map = dict()
-            for s in data["uutxo"]:
-                address = s[2]
-                tx_id = s[1]
-                if tx_id not in tx_map:
-                    tx_map[tx_id] = dict()
-                try:
-                    tx_map[tx_id][address][0] += 1
-                    tx_map[tx_id][address][1] += s[3]
-                except:
-                    tx_map[tx_id][address] = [1, s[3]]
+                tx_map = dict()
+                for s in data["stxo"]:
+                    address = s[5]
+                    if address[0] not in (0,1,2,5,6):
+                        continue
 
-            for tx_id in tx_map:
-                for address in tx_map[tx_id]:
-                    rc, ra, c, frp, lra, lrp, \
-                    sc, sa, cd, fsp, lsa, lsp = addresses[address]
-                    ra -= tx_map[tx_id][address][1]
-                    c -= tx_map[tx_id][address][0]
-                    rc -= 1
-                    addresses[address] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
+                    tx_id = s[3]
+                    if tx_id not in tx_map:
+                        tx_map[tx_id] = dict()
+                    try:
+                        tx_map[tx_id][address][0] += 1
+                        tx_map[tx_id][address][1] += s[6]
+                    except:
+                        tx_map[tx_id][address] = [1, s[6]]
 
-            batch = deque()
-            r_batch = set()
-            for a in addresses:
-                v = addresses[a]
-                if v[0] > 0:
-                    balance = v[1] - v[7]
-                    data = serialize_address_data(*v)
-                    batch.append((a, balance, data))
-                else:
-                    r_batch.add(a)
+                for tx_id in tx_map:
+                    for address in tx_map[tx_id]:
+                        if addresses[address] is None:
+                            print(address.hex())
+                        rc, ra, c, frp, lra, lrp, \
+                        sc, sa, cd, fsp, lsa, lsp = addresses[address]
+                        sa -= tx_map[tx_id][address][1]
+                        cd -= tx_map[tx_id][address][0]
+                        sc -= 1
+                        addresses[address] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
 
-            await conn.execute("""
-                                  UPDATE address SET data = r.data,  balance = r.balance 
-                                  FROM 
-                                  (SELECT address, balance, data FROM UNNEST($1::Address[])) AS r 
-                                  WHERE  address.address = r.address;
-                               """, batch)
-            await conn.execute(""" DELETE FROM  address
-                                   WHERE  address.address = ANY($1); """, r_batch)
-            raise Exception("test stop")
+                tx_map = dict()
+                for s in data["uutxo"]:
+                    address = s[2]
+                    if address[0] not in (0,1,2,5,6):
+                        continue
+
+                    tx_id = s[1]
+                    if tx_id not in tx_map:
+                        tx_map[tx_id] = dict()
+                    try:
+                        tx_map[tx_id][address][0] += 1
+                        tx_map[tx_id][address][1] += s[3]
+                    except:
+                        tx_map[tx_id][address] = [1, s[3]]
+
+                for tx_id in tx_map:
+                    for address in tx_map[tx_id]:
+                        rc, ra, c, frp, lra, lrp, \
+                        sc, sa, cd, fsp, lsa, lsp = addresses[address]
+                        ra -= tx_map[tx_id][address][1]
+                        c -= tx_map[tx_id][address][0]
+                        rc -= 1
+                        addresses[address] = (rc, ra, c, frp, lra, lrp, sc, sa, cd, fsp, lsa, lsp)
+
+                batch = deque()
+                r_batch = set()
+                for a in addresses:
+                    v = addresses[a]
+                    if v[0] > 0:
+                        balance = v[1] - v[7]
+                        d = serialize_address_data(*v)
+                        batch.append((a, balance, d))
+                    else:
+                        r_batch.add(a)
+
+                await conn.execute("""
+                                      UPDATE address SET data = r.data,  balance = r.balance 
+                                      FROM 
+                                      (SELECT address, balance, data FROM UNNEST($1::Address[])) AS r 
+                                      WHERE  address.address = r.address;
+                                   """, batch)
+                await conn.execute(""" DELETE FROM  address
+                                       WHERE  address.address = ANY($1); """, r_batch)
+                await conn.execute(""" DELETE FROM  block_address_stat WHERE  height = $1; """, data["height"])
+                await conn.execute(""" DELETE FROM  blockchian_address_stat WHERE  height = $1; """, data["height"])
 
 
         # transaction table

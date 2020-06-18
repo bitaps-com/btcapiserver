@@ -277,14 +277,8 @@ class BlockchainAnalyticaAgregator():
                             if stat_records:
                                 self.log.info("Blockchain statistics  +%s "
                                               "blocks last block %s" % (len(stat_records), height + len(stat_records)))
-
                 else:
                     await asyncio.sleep(1)
-
-
-
-
-
 
 
             except asyncio.CancelledError:
