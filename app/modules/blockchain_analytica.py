@@ -167,12 +167,14 @@ class BlockchainAnalyticaAgregator():
                                                                    "amountMap": {}}
 
                             for akey in outs_stat["typeMap"][key]["amountMap"]:
+                                a = outs_stat["typeMap"][key]["amountMap"][akey]["amount"]
+                                c = outs_stat["typeMap"][key]["amountMap"][akey]["count"]
                                 try:
-                                    bstat["outputs"]["typeMap"][key]["amountMap"][akey]["count"] += 1
-                                    bstat["outputs"]["typeMap"][key]["amountMap"][akey]["amount"] += outs_stat["typeMap"][key]["amountMap"][akey]["amount"]
+                                    bstat["outputs"]["typeMap"][key]["amountMap"][akey]["count"] += c
+                                    bstat["outputs"]["typeMap"][key]["amountMap"][akey]["amount"] += a
                                 except:
-                                    bstat["outputs"]["typeMap"][key]["amountMap"][akey] = {"count": 1,
-                                                                                           "amount": outs_stat["typeMap"][key]["amountMap"][akey]["amount"]}
+                                    bstat["outputs"]["typeMap"][key]["amountMap"][akey] = {"count": c,
+                                                                                           "amount": a}
 
                         # inputs
                         in_stats = block["inputs"]
@@ -197,7 +199,7 @@ class BlockchainAnalyticaAgregator():
                                     bstat["inputs"]["typeMap"][key]["amountMap"][akey]["count"] += c
                                     bstat["inputs"]["typeMap"][key]["amountMap"][akey]["amount"] += a
                                 except:
-                                    bstat["inputs"]["typeMap"][key]["amountMap"] = {"count": c,
+                                    bstat["inputs"]["typeMap"][key]["amountMap"][akey] = {"count": c,
                                                                                     "amount": a}
                        #transactions
                         tx_stats = block["transactions"]
