@@ -69,13 +69,18 @@ async def address_confirmed_utxo(address,  type, from_block, order, order_by, li
                                           "WHERE address = ANY($1) %s "
                                     "order by  %s %s LIMIT $2 OFFSET $3;" % (from_block, order_by, order),
                                     a, limit if limit else "ALL", limit * (page - 1))
+            outpoints = [row["outpoint"] for row in rows]
+            urows = await conn.fetch("SELECT outpoint FROM connector_unconfirmed_stxo "
+                                     "WHERE outpoint = ANY($1);", outpoints)
+            outpoints = set([row["outpoint"] for row in urows])
             for row in rows:
-                utxo.append({"txId": rh2s(row["outpoint"][:32]),
-                             "vOut": bytes_to_int(row["outpoint"][32:]),
-                             "block": row["pointer"] >> 39,
-                             "txIndex": (row["pointer"] - ((row["pointer"] >> 39) << 39)) >> 20,
-                             "amount": row["amount"],
-                             "type": SCRIPT_N_TYPES[row["address"][0]]})
+                if row["outpoint"] not in outpoints:
+                    utxo.append({"txId": rh2s(row["outpoint"][:32]),
+                                 "vOut": bytes_to_int(row["outpoint"][32:]),
+                                 "block": row["pointer"] >> 39,
+                                 "txIndex": (row["pointer"] - ((row["pointer"] >> 39) << 39)) >> 20,
+                                 "amount": row["amount"],
+                                 "type": SCRIPT_N_TYPES[row["address"][0]]})
 
     else:
         async with app["db_pool"].acquire() as conn:
@@ -93,13 +98,17 @@ async def address_confirmed_utxo(address,  type, from_block, order, order_by, li
                                           "WHERE address = $1 %s "
                                     "order by  %s %s LIMIT $2 OFFSET $3;" % (from_block, order_by, order),
                                     address, limit, limit * (page - 1))
-
+            outpoints = [row["outpoint"] for row in rows]
+            urows = await conn.fetch("SELECT outpoint FROM connector_unconfirmed_stxo "
+                                     "WHERE outpoint = ANY($1);", outpoints)
+            outpoints = set([row["outpoint"] for row in urows])
         for row in rows:
-            utxo.append({"txId": rh2s(row["outpoint"][:32]),
-                         "vOut": bytes_to_int(row["outpoint"][32:]),
-                         "block": row["pointer"] >> 39,
-                         "txIndex": (row["pointer"] - ((row["pointer"] >> 39) << 39)) >> 20,
-                         "amount": row["amount"]})
+            if row["outpoint"] not in outpoints:
+                utxo.append({"txId": rh2s(row["outpoint"][:32]),
+                             "vOut": bytes_to_int(row["outpoint"][32:]),
+                             "block": row["pointer"] >> 39,
+                             "txIndex": (row["pointer"] - ((row["pointer"] >> 39) << 39)) >> 20,
+                             "amount": row["amount"]})
 
     return {"data": utxo,
             "time": round(time.time() - q, 4)}

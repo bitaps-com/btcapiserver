@@ -128,7 +128,7 @@ async def create_db_model(app, conn):
                                PARTITION OF transaction_map
                                FOR VALUES WITH (MODULUS %s, REMAINDER %s)
                                WITH (fillfactor=100);
-                               """ % (i + 1, 200, i))
+                               """ % (i + 1, app.transaction_map_partitions, i))
 
 
 

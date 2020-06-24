@@ -192,11 +192,12 @@ class BlockchainAnalyticaAgregator():
 
                             for akey in in_stats["typeMap"][key]["amountMap"]:
                                 a = in_stats["typeMap"][key]["amountMap"][akey]["amount"]
+                                c = in_stats["typeMap"][key]["amountMap"][akey]["count"]
                                 try:
-                                    bstat["inputs"]["typeMap"][key]["amountMap"][akey]["count"] += 1
+                                    bstat["inputs"]["typeMap"][key]["amountMap"][akey]["count"] += c
                                     bstat["inputs"]["typeMap"][key]["amountMap"][akey]["amount"] += a
                                 except:
-                                    bstat["inputs"]["typeMap"][key]["amountMap"] = {"count": 1,
+                                    bstat["inputs"]["typeMap"][key]["amountMap"] = {"count": c,
                                                                                     "amount": a}
                        #transactions
                         tx_stats = block["transactions"]

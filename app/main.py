@@ -57,6 +57,7 @@ class App:
         self.mempool_analytica = True if config["OPTIONS"]["mempool_analytica"] == "on" else False
 
 
+        self.transaction_map_partitions =  int(config["SERVER"]["transaction_map_partitions"])
         self.coinbase_maturity =  int(config["SYNCHRONIZATION"]["coinbase_maturity"])
 
         self.block_preload_workers = int(config["SYNCHRONIZATION"]["block_preload_workers"])
