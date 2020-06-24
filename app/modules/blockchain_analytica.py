@@ -128,6 +128,15 @@ class BlockchainAnalyticaAgregator():
             print(traceback.format_exc())
         while True:
             try:
+                if not self.bootstrap_completed:
+                    async with self.db_pool.acquire() as conn:
+                        v = await conn.fetchval("SELECT value FROM service WHERE name = 'bootstrap_completed' LIMIT 1;")
+                        if v == '1':
+                            self.bootstrap_completed = True
+
+                        else:
+                            await asyncio.sleep(10)
+                            continue
 
                 rows = []
                 async with self.db_pool.acquire() as conn:
