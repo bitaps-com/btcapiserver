@@ -171,7 +171,7 @@ class BlockchainAnalyticaAgregator():
                                 bstat["outputs"]["typeMap"][key]["count"] += outs_stat["typeMap"][key]["count"]
                                 bstat["outputs"]["typeMap"][key]["amount"] += outs_stat["typeMap"][key]["amount"]
                             except:
-                                bstat["outputs"]["typeMap"][key]= {"count": 1,
+                                bstat["outputs"]["typeMap"][key]= {"count": outs_stat["typeMap"][key]["count"],
                                                                    "amount": outs_stat["typeMap"][key]["amount"],
                                                                    "amountMap": {}}
 
@@ -197,7 +197,7 @@ class BlockchainAnalyticaAgregator():
                                 bstat["inputs"]["typeMap"][key]["count"] += in_stats["typeMap"][key]["count"]
                                 bstat["inputs"]["typeMap"][key]["amount"] += a
                             except:
-                                bstat["inputs"]["typeMap"][key] = {"count": 1,
+                                bstat["inputs"]["typeMap"][key] = {"count": in_stats["typeMap"][key]["count"],
                                                                    "amount": a,
                                                                    "amountMap": {}}
 
