@@ -7,14 +7,14 @@ from model import address_unconfirmed_utxo
 from model import address_state_extended
 from model import address_transactions
 from model import address_unconfirmed_transactions
-from pybtc import address_type
-from pybtc import address_net_type
-from pybtc import address_to_hash
-from pybtc import bytes_needed
+from pyltc import address_type
+from pyltc import address_net_type
+from pyltc import address_to_hash
+from pyltc import bytes_needed
 from utils import APIException
 from utils import INTERNAL_SERVER_ERROR
 from utils import PARAMETER_ERROR
-
+import math
 
 async def get_address_state(request):
     log = request.app["log"]

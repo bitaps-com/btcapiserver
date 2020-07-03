@@ -3,12 +3,12 @@ import traceback
 import json
 from model import tx_by_pointers_opt_tx
 from model import tx_hash_by_pointers
-from pybtc import s2rh
+from pyltc import s2rh
 from utils import APIException
 from utils import INTERNAL_SERVER_ERROR
 from utils import PARAMETER_ERROR
 from utils import JSON_DECODE_ERROR
-
+import math
 
 async def get_transaction_by_pointer_list(request):
     log = request.app["log"]

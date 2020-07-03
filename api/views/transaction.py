@@ -5,11 +5,11 @@ from model import tx_by_pointer_opt_tx
 from model import tx_hash_by_pointer
 from model import calculate_tx_merkle_proof_by_pointer
 from model import tx_merkle_proof_by_pointer
-from pybtc import s2rh
+from pyltc import s2rh
 from utils import APIException
 from utils import INTERNAL_SERVER_ERROR
 from utils import PARAMETER_ERROR
-
+import math
 
 async def get_transaction_by_pointer(request):
     log = request.app["log"]

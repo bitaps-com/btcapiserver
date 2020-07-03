@@ -7,11 +7,11 @@ from model import block_data_by_pointer
 from model import block_transactions
 from model import block_transaction_id_list
 from model import blockchain_state
-from pybtc import s2rh
+from pyltc import s2rh
 from utils import APIException
 from utils import INTERNAL_SERVER_ERROR
 from utils import INVALID_BLOCK_POINTER
-
+import math
 
 async def get_block_last(request):
     return await get_block_by_pointer(request, 'last')

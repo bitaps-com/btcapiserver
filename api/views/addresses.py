@@ -5,15 +5,16 @@ from pybtc import s2rh
 from model import blockchain_addresses_stat
 from model import block_addresses_stat
 from model import address_list_state
-from pybtc import address_type
-from pybtc import address_net_type
-from pybtc import address_to_hash
-from pybtc import bytes_needed
+from pyltc import address_type
+from pyltc import address_net_type
+from pyltc import address_to_hash
+from pyltc import bytes_needed
 from utils import APIException
 from utils import INTERNAL_SERVER_ERROR
 from utils import PARAMETER_ERROR
 from utils import JSON_DECODE_ERROR
 from utils import INVALID_BLOCK_POINTER
+import math
 
 async def get_address_state_by_list(request):
     log = request.app["log"]
