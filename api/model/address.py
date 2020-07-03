@@ -1,6 +1,6 @@
-from pybtc import *
+from pyltc import *
 from utils import *
-from pybtc import rh2s, SCRIPT_N_TYPES
+from pyltc import rh2s, SCRIPT_N_TYPES
 import time
 
 

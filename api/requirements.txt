@@ -7,6 +7,7 @@ setproctitle
 colorlog==3.1.4
 python-json-logger==0.1.9
 git+https://github.com/bitaps-com/pybtc@no_analityca
+git+https://github.com/bitaps-com/pyltc
 git+https://github.com/bitaps-com/aiojsonrpc
 pyzmq
 
