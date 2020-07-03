@@ -2,7 +2,7 @@ from pyltc import *
 from pyltc import rh2s, SCRIPT_N_TYPES
 import time
 import base64
-
+import json
 
 async def tx_by_pointers_opt_tx(pointers, hashes, option_raw_tx, app):
     q = time.time()

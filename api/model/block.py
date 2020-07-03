@@ -5,7 +5,7 @@ from .service import block_map_update
 from pyltc import rh2s, SCRIPT_N_TYPES
 import time
 import base64
-
+import json
 
 async def block_by_pointer(pointer, app):
     pool = app["db_pool"]

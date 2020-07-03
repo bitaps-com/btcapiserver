@@ -2,7 +2,7 @@ from pyltc import *
 from utils import *
 from pyltc import rh2s, SCRIPT_N_TYPES
 import time
-
+import json
 
 async def address_state(address,  type, app):
     q = time.time()

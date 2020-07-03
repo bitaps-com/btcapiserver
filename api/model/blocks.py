@@ -5,6 +5,7 @@ from .service import block_map_update
 from pybtc import rh2s, SCRIPT_N_TYPES
 import time
 import base64
+import json
 
 
 async def  last_n_blocks(n, app):
