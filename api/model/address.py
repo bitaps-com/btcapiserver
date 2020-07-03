@@ -2,6 +2,7 @@ from pyltc import *
 from utils import *
 from pyltc import rh2s, SCRIPT_N_TYPES
 import time
+from pybtc import hash_to_script
 import math
 
 async def address_state(address,  type, app):
