@@ -10,7 +10,7 @@ from model import address_unconfirmed_transactions
 from pyltc import address_type
 from pyltc import address_net_type
 from pyltc import address_to_hash
-from pyltc import hash_to_script
+from pybtc import hash_to_script
 from pyltc import bytes_needed
 from utils import APIException
 from utils import INTERNAL_SERVER_ERROR
