@@ -123,9 +123,11 @@ async def  data_last_n_blocks(n, app):
     for row in rows:
         block = dict()
         block["height"] = row["height"]
-        if block["height"] > app["last_block"]:
+        if block["height"] not in app["block_map_time"]:
+            print(1)
             await block_map_update(app)
-            if block["height"] > app["last_block"]:
+            if block["height"] not in app["block_map_time"]:
+                print(block["height"], app["last_block"])
                 raise Exception("internal error")
         block["hash"] = rh2s(row["hash"])
         block["header"] = base64.b64encode(row["header"]).decode()
@@ -144,7 +146,7 @@ async def  data_last_n_blocks(n, app):
         block["bits"] = bytes_to_int(bytes_from_hex(block["bits"]))
         block["nonceHex"] = block["nonce"].to_bytes(4, byteorder="big").hex()
         block["versionHex"] = int_to_bytes(block["version"]).hex()
-        block["difficulty"] = round(block["targetDifficulty"], 2)
+        block["difficulty"] = block["targetDifficulty"], 2
         q = int.from_bytes(s2rh(block["hash"]), byteorder="little")
         block["blockDifficulty"] = target_to_difficulty(q)
         del block["targetDifficulty"]
@@ -234,7 +236,7 @@ async def  blocks_data_last_n_hours(n, app):
         block["bits"] = bytes_to_int(bytes_from_hex(block["bits"]))
         block["nonceHex"] = block["nonce"].to_bytes(4, byteorder="big").hex()
         block["versionHex"] = int_to_bytes(block["version"]).hex()
-        block["difficulty"] = round(block["targetDifficulty"], 2)
+        block["difficulty"] = block["targetDifficulty"], 2
         q = int.from_bytes(s2rh(block["hash"]), byteorder="little")
         block["blockDifficulty"] = target_to_difficulty(q)
         del block["targetDifficulty"]
@@ -334,7 +336,7 @@ async def  data_blocks_daily(day, app):
         block["bits"] = bytes_to_int(bytes_from_hex(block["bits"]))
         block["nonceHex"] = block["nonce"].to_bytes(4, byteorder="big").hex()
         block["versionHex"] = int_to_bytes(block["version"]).hex()
-        block["difficulty"] = round(block["targetDifficulty"], 2)
+        block["difficulty"] = block["targetDifficulty"], 2
         q = int.from_bytes(s2rh(block["hash"]), byteorder="little")
         block["blockDifficulty"] = target_to_difficulty(q)
         del block["targetDifficulty"]

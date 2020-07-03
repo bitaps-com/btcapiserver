@@ -1,0 +1,1 @@
+docker build -t btcapi-filters-positive-test .

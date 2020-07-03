@@ -324,6 +324,8 @@ class App:
 
 
     async def synchronization_completed_handler(self):
+        async with self.db_pool.acquire() as conn:
+            await conn.execute("UPDATE service SET value = '1' WHERE name = 'block_filters_bootstrap';")
         while True:
             try:
                 async with self.db_pool.acquire() as conn:
@@ -1112,7 +1114,7 @@ class App:
                             k = parse_script(bytes(address[1:]))
                             e = k["addressHash"][:20]
                         else:
-                            e = bytes(address[1:21])
+                            e = bytes(address[1:])
                         q = map_into_range(siphash(e), F)
 
                         try:
@@ -1235,6 +1237,7 @@ class App:
                     tx_batch = False
                 async with self.db_pool.acquire() as conn:
                     async with conn.transaction():
+                        await conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;")
                         if self.blocks_data:
                             blocks_columns = ["height", "hash", "header", "adjusted_timestamp", "miner", "data"]
                         else:

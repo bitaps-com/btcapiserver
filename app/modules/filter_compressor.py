@@ -52,7 +52,7 @@ class FilterCompressor():
         self.log.info("batch compressor started")
 
         try:
-            n_type_map_filter_type = {0: 2, 1: 4, 2: 1, 5: 8, 6: 16}
+            n_type_map_filter_type = {0: 2, 1: 4, 2: 1, 5: 8, 6: 16} # map script type to filter type
 
             tts = 0
             batch_size = self.batch_size
@@ -72,45 +72,56 @@ class FilterCompressor():
                     # load last filters hash
                     async with self.db_pool.acquire() as conn:
 
-                        deep_synchronization = await conn.fetchval("SELECT value FROM connector_utxo_state "
-                                                                  "WHERE name = 'deep_synchronization' LIMIT 1;")
+                        block_filters_bootstrap_wait = await conn.fetchval("SELECT value FROM service "
+                                                                  "WHERE name = 'block_filters_bootstrap' LIMIT 1;")
+                        print("block_filters_bootstrap", block_filters_bootstrap_wait)
                         h = await conn.fetchval("SELECT height FROM block_filter  ORDER BY height DESC LIMIT 1;")
                         if h is not None:
                             last_batch_height = (h // batch_size) * batch_size
                             last_height = last_batch_height + batch_size - 1
-                            if h != last_height:
-                                data = {'last_hash': last_hash,
-                                        'batch_map': batch_map,
-                                        'element_index': element_index}
-                                await conn.execute("INSERT INTO block_filters_batch (height, data) "
-                                                   "VALUES ($1, $2) ON CONFLICT(height) DO NOTHING;",
-                                                   h, gzip.compress(pickle.dumps(data)))
-
-                                await conn.execute("VACUUM FULL raw_block_filters")
-                                await conn.execute("ANALYZE raw_block_filters")
-                                self.log.info("Block filter compressor bootsrap completed")
-
-                                self.loop.create_task(self.terminate_coroutine())
-                                self.compressor_task = None
-                                return
 
                             rows = await conn.fetch("SELECT type, hash FROM block_filter where height = $1;", h)
                             for row in rows:
                                 last_hash[row["type"]] = row["hash"]
+                        print("last height", last_height)
 
+                        if last_height >=0 and h != last_height:
+                            data = {'last_hash': last_hash,
+                                    'batch_map': batch_map,
+                                    'element_index': element_index}
+                            await conn.execute("INSERT INTO block_filters_batch (height, data) "
+                                               "VALUES ($1, $2) ON CONFLICT(height) DO NOTHING;",
+                                               h, gzip.compress(pickle.dumps(data)))
 
-                        blocks = await conn.fetch("SELECT blocks.height, filter "
+                            await conn.execute("VACUUM FULL raw_block_filters")
+                            await conn.execute("ANALYZE raw_block_filters")
+                            self.log.info("Block filter compressor bootstrap completed")
+
+                            self.loop.create_task(self.terminate_coroutine())
+                            self.compressor_task = None
+                            return
+
+                        blocks = await conn.fetch("SELECT height, filter "
                                                   "FROM raw_block_filters "
-                                                  "JOIN blocks ON blocks.height = raw_block_filters.height "
                                                   "WHERE raw_block_filters.height > $1 "
-                                                  "ORDER BY raw_block_filters.height ASC LIMIT $2;",
-                                                  last_height, batch_size)
+                                                  "and raw_block_filters.height <= $2 "
+                                                  "ORDER BY raw_block_filters.height;",
+                                                  last_height, last_height + batch_size)
+                    print("last_height", last_height, "last_height + batch_size", last_height + batch_size, len(blocks) )
 
                     if len(blocks) != batch_size:
-                        if deep_synchronization:
-                            await asyncio.sleep(1)
+                        print(block_filters_bootstrap_wait)
+                        if not bool(int(block_filters_bootstrap_wait)):
+                            await asyncio.sleep(10)
                             continue
-
+                        else:
+                            if last_height == -1:
+                                continue
+                            async with self.db_pool.acquire() as conn:
+                                t = await conn.fetchval("SELECT count(height) FROM raw_block_filters;")
+                                if t !=  len(blocks):
+                                    raise Exception("block filters filed")
+                            print(">>")
                     elements_count, elements_size = 0, 0
                     duplicates_count, duplicates_size = 0, 0
 
@@ -130,8 +141,18 @@ class FilterCompressor():
 
 
                         last_height = block["height"]
+                        i = 0
+                        uq = set()
+                        while True:
+                            if i == len(block["filter"]):
+                                break
+                            if i > len(block["filter"]):
+                                raise Exception("Block filter invalid")
+                            l = 20 if block["filter"][i] != 6 else 32
+                            uq.add(block["filter"][i:i + 5 + l])
+                            i += 5 + l
 
-                        for re in set([block["filter"][i:i + 25] for i in range(0, len(block["filter"]), 25)]):
+                        for re in uq:
                             f_type = n_type_map_filter_type[re[0]]
                             e = map_into_range(siphash(re[5:]),  F)
 

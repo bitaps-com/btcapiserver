@@ -1119,9 +1119,69 @@ async def mempool_state(app):
     async with app["db_pool"].acquire() as conn:
         row = await conn.fetchrow("SELECT inputs, outputs, transactions from mempool_analytica  "
                                " order by minute desc limit 1")
-        inputs = json.loads(row["inputs"])
-        outputs = json.loads(row["outputs"])
-        transactions = json.loads(row["transactions"])
+        if row is not None:
+            inputs = json.loads(row["inputs"])
+            outputs = json.loads(row["outputs"])
+            transactions = json.loads(row["transactions"])
+        else:
+            outputs = {"count": 0,
+                       "amount": {"max": {"value": None,
+                                          "txId": None},
+                                  "min": {"value": None,
+                                          "txId": None},
+                                  "total": 0
+                                  },
+                       "typeMap": {},
+                       "amountMap": {}}
+            inputs = {"count": 0,
+                      "amount": {"max": {"value": None,
+                                         "txId": None},
+                                 "min": {"value": None,
+                                         "txId": None},
+                                 "total": 0
+                                 },
+                      "typeMap": {},
+                      "amountMap": {},
+                      "ageMap": {}}
+
+            transactions = {"fee": {"max": {"value": None,
+                                            "txId": None},
+                                    "min": {"value": None,
+                                            "txId": None},
+                                    "total": 0
+                                    },
+                            "size": {"max": {"value": None,
+                                             "txId": None},
+                                     "min": {"value": None,
+                                             "txId": None},
+                                     "total": 0
+                                     },
+                            "vSize": {"max": {"value": None,
+                                              "txId": None},
+                                      "min": {"value": None,
+                                              "txId": None},
+                                      "total": 0
+                                      },
+                            "amount": {"max": {"value": None,
+                                               "txId": None},
+                                       "min": {"value": None,
+                                               "txId": None},
+                                       "total": 0
+                                       },
+                            "feeRate": {"max": {"value": None,
+                                                "txId": None},
+                                        "min": {"value": None,
+                                                "txId": None},
+                                        "best": 1,
+                                        "best4h": 1,
+                                        "bestHourly": 1
+                                        },
+                            "segwitCount": 0,
+                            "rbfCount": 0,
+                            "doublespend": {"count": 0, "size": 0, "vSize": 0, "amount": 0},
+                            "doublespendChilds": {"count": 0, "size": 0, "vSize": 0, "amount": 0},
+                            "feeRateMap": {},
+                            "count": 0}
 
     return {"data": {"inputs": inputs,
                      "outputs": outputs,

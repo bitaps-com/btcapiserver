@@ -39,9 +39,11 @@ async def load_block_map(app):
     app["time_map_block"] = dict()
     l = list()
     async with app["db_pool"].acquire() as conn:
-        stmt = await conn.prepare("SELECT adjusted_timestamp, height , header  "
-                                  "FROM blocks order by height asc;")
-        rows = await stmt.fetch()
+        async with conn.transaction():
+            await conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;")
+            stmt = await conn.prepare("SELECT adjusted_timestamp, height , header  "
+                                      "FROM blocks order by height asc;")
+            rows = await stmt.fetch()
     for row in rows:
         t = unpack("<L", row["header"][68:72])[0]
         if app["blocks_data"]:
@@ -56,7 +58,9 @@ async def load_block_map(app):
         app["day_map_block"][ceil(row["adjusted_timestamp"] / 86400)] = row["height"]
         app["time_map_block"][row["adjusted_timestamp"]] = row["height"]
         app["last_block"] = row["height"]
+
     app["log"].info("Loaded time map for %s blocks" % app["last_block"])
+    print(len(app["block_map_time"]), "last", app["last_block"])
     app["loop"].create_task(block_map_update_task(app))
 
 
@@ -65,12 +69,30 @@ async def block_map_update(app):
         if i < 0:
             i = 0
         l = [app["block_map_time"][q][1] for q in range(app["last_block"], i)]
-        async with app["db_pool"].acquire() as conn:
-            stmt = await conn.prepare("SELECT adjusted_timestamp, height, header  "
-                                      "FROM blocks WHERE height > $1 "
-                                      "ORDER BY height asc;")
-            rows = await stmt.fetch(app["last_block"])
+        while 1:
+            async with app["db_pool"].acquire() as conn:
+                async with conn.transaction():
+                    await conn.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;")
+                    last = await conn.fetchval("SELECT  height  "
+                                              "FROM blocks  "
+                                              "ORDER BY height desc  LIMIT 1;")
+                    print("last", last)
+                    b = [k for k in range(app["last_block"] + 1, last + 1)]
+                    print("last", last, b)
+                    rows = await conn.fetch("SELECT adjusted_timestamp, height, header  "
+                                              "FROM blocks WHERE height = ANY($1)"
+                                              "ORDER BY height asc;", b)
+            print(">>", len(rows), "from ", app["last_block"])
+            if len(b) != len(rows):
+                continue
+            else:
+                break
+
+
+
+        print("->>", len(rows), "from ",  app["last_block"])
         for row in rows:
+            print(">",row["height"], app["last_block"], len(app["block_map_time"]))
             t = unpack("<L", row["header"][68:72])[0]
             if app["blocks_data"]:
                 l.append(t)
@@ -84,6 +106,7 @@ async def block_map_update(app):
             app["time_map_block"][row["adjusted_timestamp"]] = row["height"]
             app["last_block"] = row["height"]
             app["log"].warning("New block: %s" % row["height"])
+
 
 
 

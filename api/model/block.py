@@ -136,9 +136,10 @@ async def block_data_by_pointer(pointer, stat, app):
 
         block = dict()
         block["height"] = row["height"]
-        if block["height"] > app["last_block"]:
+        if block["height"] not in app["block_map_time"]:
             await block_map_update(app)
-            if block["height"] > app["last_block"]:
+            if block["height"] not in app["block_map_time"]:
+
                 raise Exception("internal error")
         block["hash"] = rh2s(row["hash"])
         block["header"] = base64.b64encode(row["header"]).decode()
@@ -149,6 +150,7 @@ async def block_data_by_pointer(pointer, stat, app):
             block["miner"] = json.loads(row["miner"])
         except:
             block["miner"] = None
+        print(block["height"] not in app["block_map_time"])
         block["medianBlockTime"] = app["block_map_time"][block["height"]][2]
         block["blockTime"] = app["block_map_time"][block["height"]][1]
         block["receivedTimestamp"] = row["timestamp_received"]

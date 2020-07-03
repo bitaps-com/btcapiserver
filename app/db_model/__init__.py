@@ -122,15 +122,17 @@ async def create_db_model(app, conn):
         await conn.execute(open("./db_model/sql/transaction_history.sql",
                                 "r", encoding='utf-8').read().replace("\n", ""))
 
-        for i in range(50):
-            await conn.execute("""
-                               CREATE TABLE  IF NOT EXISTS transaction_map_%s
-                               PARTITION OF transaction_map
-                               FOR VALUES WITH (MODULUS %s, REMAINDER %s)
-                               WITH (fillfactor=100);
-                               """ % (i + 1, app.transaction_map_partitions, i))
+        t = await  conn.fetchval("""SELECT EXISTS ( SELECT FROM information_schema.tables 
+                             WHERE    table_name   = 'transaction_map_1');""")
 
-
+        if not t:
+            for i in range(app.transaction_map_partitions):
+                await conn.execute("""
+                                   CREATE TABLE transaction_map_%s
+                                   PARTITION OF transaction_map
+                                   FOR VALUES WITH (MODULUS %s, REMAINDER %s)
+                                   WITH (fillfactor=100);
+                                   """ % (i + 1, app.transaction_map_partitions, i))
 
         await conn.execute("""
                            INSERT INTO service (name, value) VALUES ('transaction_history', '1')  
@@ -444,5 +446,10 @@ async def create_db_model(app, conn):
     rows = await conn.fetch("SELECT hash from blocks order by height desc limit 100;")
     for row in rows:
         app.chain_tail.append(rh2s(row["hash"]))
+
+    await conn.execute(""" INSERT INTO service (name, value) VALUES ('block_filters_bootstrap', '0')
+                           ON CONFLICT(name) DO UPDATE SET value = '0';
+                       """)
+
 
 
