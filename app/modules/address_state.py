@@ -107,7 +107,6 @@ class AddressState():
         previous_height = -1
         last_block_height = -1
         limit = 200
-        debug = 1
         next_batch = None
         address_cache = self.address_cache
         affected_new = self.affected_new
@@ -138,7 +137,6 @@ class AddressState():
                         v = await conn.fetchval("SELECT value FROM service WHERE name = 'bootstrap_completed' LIMIT 1;")
                         if v == '1':
                             self.bootstrap_completed = True
-
                         else:
                             await asyncio.sleep(10)
                             continue
@@ -194,8 +192,12 @@ class AddressState():
                             await conn.fetchval("CREATE INDEX IF NOT EXISTS  "
                                                 " address_rich_list ON address (balance DESC);")
                             self.log.warning("Create index on address completed")
+                    # clear cache
+                    self.address_cache.clear()
+                    self.affected_existed.clear()
+                    self.affected_new.clear()
+                    self.missed_addresses = set()
                     await asyncio.sleep(1)
-
                     continue
 
                 qg = time.time()
@@ -396,6 +398,8 @@ class AddressState():
                                             blockchain_stat["reused"] += inputs_reused
 
                                             for amount in after_block_balance.values():
+                                                if amount < 0:
+                                                    print(amount)
                                                 key = 'null' if amount == 0 else str(floor(log10(amount)))
                                                 try:
                                                     blockchain_stat["amountMap"][key]["amount"] += amount
