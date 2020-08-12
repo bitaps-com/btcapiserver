@@ -548,7 +548,15 @@ class AddressState():
                 self.affected_existed.clear()
                 self.affected_new.clear()
                 self.missed_addresses = set()
+                block_stat_records = []
                 height = -1
+
+                try:
+                    commit.cancel()
+                    await commit
+                except:
+                    pass
+
                 commit_task = False
                 next_batch = None
                 self.log.error("Addresses state task error: %s" % err)

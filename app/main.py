@@ -348,6 +348,7 @@ class App:
                 return
             except Exception as err:
                 self.log.error("Synchronization completed handler: %s" % err)
+                print(traceback.format_exc())
                 await asyncio.sleep(10)
 
 
@@ -1112,7 +1113,7 @@ class App:
                         f_type = n_type_map_filter_type[address[0]]
                         if address[0] == 2:
                             k = parse_script(bytes(address[1:]))
-                            e = k["addressHash"][:20]
+                            e = k["addressHash"]
                         else:
                             e = bytes(address[1:])
                         q = map_into_range(siphash(e), F)
@@ -1173,8 +1174,8 @@ class App:
                 await conn.execute("INSERT INTO block_filters_batch (height, data) "
                                    "VALUES ($1, $2);", block["height"],
                                    gzip.compress(pickle.dumps({'last_hash': last_hash,
-                                                 'batch_map': batch_map,
-                                                 'element_index': element_index})))
+                                                               'batch_map': batch_map,
+                                                               'element_index': element_index})))
 
             # blocks table
 
