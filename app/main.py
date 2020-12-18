@@ -1448,7 +1448,6 @@ if __name__ == '__main__':
         except:
             pass
 
-
     except Exception as err:
         logger.critical("Configuration failed: %s" % err)
         logger.critical("Shutdown")
