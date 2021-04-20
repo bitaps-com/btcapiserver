@@ -2,7 +2,7 @@ jinja2>=2.10.1
 aiohttp
 aiohttp_jinja2==1.0.0
 pytz==2018.5
-asyncpg==0.16.0
+asyncpg==0.21.0
 setproctitle
 colorlog==3.1.4
 python-json-logger==0.1.9
