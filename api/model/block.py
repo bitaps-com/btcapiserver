@@ -225,17 +225,17 @@ async def block_transactions(pointer, option_raw_tx, limit, page, order, mode, a
             raise APIException(NOT_FOUND, "block not found", status=404)
 
         count = var_int_to_int(block_row["header"][80:])
-        pages = count // limit
+        pages = math.ceil(count / limit)
         if app["merkle_proof"]:
             rows = await conn.fetch("SELECT tx_id, raw_transaction,  timestamp, pointer, merkle_proof  "
                                     "FROM transaction  WHERE pointer >= $1 AND pointer < $2 "
                                     "ORDER BY pointer %s LIMIT $3 OFFSET $4;" % order,
-                                    pointer << 39, (pointer + 1) << 39, limit + 1, limit * (page - 1))
+                                    pointer << 39, (pointer + 1) << 39, limit, limit * (page - 1))
         else:
             rows = await conn.fetch("SELECT tx_id, raw_transaction,  timestamp, pointer  "
                                     "FROM transaction  WHERE pointer >= $1 AND pointer < $2 "
                                     "ORDER BY pointer %s LIMIT $3 OFFSET $4;" % order,
-                                    pointer << 39, (pointer + 1) << 39, limit + 1, limit * (page - 1))
+                                    pointer << 39, (pointer + 1) << 39, limit, limit * (page - 1))
         block_time = unpack("<L", block_row["header"][68: 68 + 4])[0]
 
         transactions = list()
@@ -396,7 +396,7 @@ async def block_transaction_id_list(pointer, limit, page, order, app):
             rows = await conn.fetch("SELECT tx_id "
                                     "FROM transaction  WHERE pointer >= $1 AND pointer < $2 "
                                     "ORDER BY pointer %s LIMIT $3 OFFSET $4;" % order,
-                                    pointer << 39, (pointer + 1) << 39, limit + 1, limit * (page - 1))
+                                    pointer << 39, (pointer + 1) << 39, limit, limit * (page - 1))
         transactions = [rh2s(t["tx_id"]) for t in rows]
         app["block_transaction_id_list"][pointer] = transactions
     resp = {"data": transactions,
