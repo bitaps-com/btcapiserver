@@ -320,14 +320,16 @@ async def block_transactions(pointer, option_raw_tx, limit, page, order, mode, a
 
 
             for m in range(len(transactions)):
-                transactions[m]["fee"] = transactions[m]["inputsAmount"] - transactions[m]["amount"]
+                if transactions[m]["coinbase"]:
+                    transactions[m]["fee"] = 0
+                else:
+                    transactions[m]["fee"] = transactions[m]["inputsAmount"] - transactions[m]["amount"]
                 transactions[m]["outputsAmount"] = transactions[m]["amount"]
                 if mode != "verbose":
                     transactions[m]["inputs"] = len(transactions[m]["vIn"])
                     transactions[m]["outputs"] = len(transactions[m]["vOut"])
                     del transactions[m]["vIn"]
                     del transactions[m]["vOut"]
-            transactions[0]["fee"] = 0
             # get information about spent output coins
             if mode == "verbose":
                 # get information about spent output coins
