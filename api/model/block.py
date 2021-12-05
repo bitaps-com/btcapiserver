@@ -67,9 +67,11 @@ async def block_utxo(pointer, limit, page, order, app):
     for row in rows[:limit]:
         address = row["address"]
         address_type = SCRIPT_N_TYPES[address[0]]
-        if address[0] in (0, 1, 5, 6):
+        if address[0] in (0, 1, 5, 6, 9):
             script_hash = True if address[0] in (1,6) else False
             witness = 0 if address[0] in (1,6) else None
+            if address[0] == 9:
+                witness = 1
             address = hash_to_address(address[1:], testnet=app["testnet"],
                                       script_hash = script_hash, witness_version = witness)
             script = address_to_script(address, hex=1)

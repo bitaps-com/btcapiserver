@@ -208,7 +208,7 @@ class AddressState():
 
                 for w in (stxo, utxo, ustxo):
                     for i in w:
-                        if i["address"][0] in (0, 1, 2, 5, 6):
+                        if i["address"][0] in (0, 1, 2, 5, 6, 9):
                             if not address_cache.get(i["address"]):
                                 missed_addresses.add(i["address"])
 
@@ -441,7 +441,7 @@ class AddressState():
                                             z -= 1
                                             break
 
-                                        if za[0] in (0, 1, 2, 5, 6):
+                                        if za[0] in (0, 1, 2, 5, 6, 9):
                                             out_addresses.add(za)
                                             try:
                                                 # [coins, amount]
@@ -470,7 +470,7 @@ class AddressState():
 
                             # handel output record
                             if yh <= zh:
-                                if y is not None and ya[0] in (0, 1, 2, 5, 6):
+                                if y is not None and ya[0] in (0, 1, 2, 5, 6, 9):
                                     out_addresses.add(ya)
                                     try:
                                         # [coins, amount]
@@ -485,7 +485,7 @@ class AddressState():
                                 else:
                                     y -= 1
                     # handel input record
-                    if i is not None and ia[0] in (0, 1, 2, 5, 6):
+                    if i is not None and ia[0] in (0, 1, 2, 5, 6, 9):
                         input_addresses.add(ia)
                         try:
                             # [coins_destroyed, amount]

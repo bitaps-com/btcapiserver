@@ -616,7 +616,7 @@ async def address_transactions(address,  type, limit, page, order, mode, timelin
         tx_list.append(tx)
         ts = dict()
         for d in a:
-            if d[0] in (0, 1, 5, 6):
+            if d[0] in (0, 1, 5, 6, 9):
                 ts[hash_to_script(d[1:], d[0], hex=True)] = {"r": 0, "s": 0, "i": 0, "o": 0}
             else:
                 ts[d[1:].hex()] =  {"r": 0, "s": 0, "i": 0, "o": 0}
@@ -647,9 +647,11 @@ async def address_transactions(address,  type, limit, page, order, mode, timelin
                 tx_list[i]["vIn"][k]["blockHeight"] = pointer >> 39
                 tx_list[i]["vIn"][k]["confirmations"] = app["last_block"] - (pointer >> 39) + 1
 
-                if d[0][0] in (0, 1, 2, 5, 6):
+                if d[0][0] in (0, 1, 2, 5, 6, 9):
                     script_hash = True if d[0][0] in (1, 6) else False
                     witness_version = None if d[0][0] < 5 else 0
+                    if d[0][0] == 9:
+                        witness_version = 1
                     try:
                         if d[0][0] == 2:
                             ad = b"\x02" + parse_script(d[0][1:])["addressHash"]
@@ -890,7 +892,7 @@ async def address_unconfirmed_transactions(address,  type, limit, page, order, m
             pass
         ts = dict()
         for d in a:
-            if d[0] in (0, 1, 5, 6):
+            if d[0] in (0, 1, 5, 6, 9):
                 ts[hash_to_script(d[1:], d[0], hex=True)] = 0
             else:
                 ts[d[1:].hex()] = 0
@@ -935,9 +937,11 @@ async def address_unconfirmed_transactions(address,  type, limit, page, order, m
                     tx_list[i]["vIn"][k]["blockHeight"] = None
                     tx_list[i]["vIn"][k]["confirmations"] = None
 
-                if d[0][0] in (0, 1, 2, 5, 6):
+                if d[0][0] in (0, 1, 2, 5, 6, 9):
                     script_hash = True if d[0][0] in (1, 6) else False
                     witness_version = None if d[0][0] < 5 else 0
+                    if d[0][0] == 9:
+                        witness_version = 1
                     try:
                         if d[0][0] == 2:
                             ad = b"\x02" + parse_script(d[0][1:])["addressHash"]

@@ -152,9 +152,11 @@ async def tx_by_pointers_opt_tx(pointers, hashes, option_raw_tx, app):
                         r[t]["inputsAmount"] += d["amount"]
                         r[t]["vIn"][i]["blockHeight"] = d["pointer"] >> 39
                         r[t]["vIn"][i]["confirmations"] = app["last_block"] - (d["pointer"] >> 39) + 1
-                        if d["address"][0] in (0,1,2,5,6):
+                        if d["address"][0] in (0,1,2,5,6, 9):
                             script_hash = True if d["address"][0] in (1, 6) else False
                             witness_version = None if d["address"][0] < 5 else 0
+                            if r["address"][0] == 9:
+                                witness_version = 1
                             r[t]["vIn"][i]["address"] = hash_to_address(d["address"][1:],
                                                                         testnet=app["testnet"],
                                                                         script_hash = script_hash,
@@ -211,9 +213,11 @@ async def tx_by_pointers_opt_tx(pointers, hashes, option_raw_tx, app):
                             r[t]["vIn"][i]["blockHeight"] = None
                             r[t]["vIn"][i]["confirmations"] = None
 
-                        if d["address"][0] in (0,1,2,5,6):
+                        if d["address"][0] in (0,1,2,5,6,9):
                             script_hash = True if d["address"][0] in (1, 6) else False
                             witness_version = None if d["address"][0] < 5 else 0
+                            if r["address"][0] == 9:
+                                witness_version = 1
                             try:
                                 if d["address"][0] == 2:
                                     ad = b"\x02" + parse_script(d["address"][1:])["addressHash"]

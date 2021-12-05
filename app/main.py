@@ -1097,18 +1097,19 @@ class App:
                 element_index = result['element_index']
 
                 if (block["height"]) % 1000 == 0:
-                    batch_map = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16: dict()}
-                    element_index = {1: 0, 2: 0, 4: 0, 8: 0, 16: 0}
+                    batch_map = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16: dict(), 32: dict()}
+                    element_index = {1: 0, 2: 0, 4: 0, 8: 0, 16: 0, 32: 0}
 
                 F = 2 ** 32
-                elements = {1: SortedSet(), 2: SortedSet(), 4: SortedSet(), 8: SortedSet(), 16: SortedSet()}
-                duplicates = {1: set(), 2: set(), 4: set(), 8: set(), 16: set()}
-                tx_filters = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16: dict()}
-                n_type_map_filter_type = {0: 2, 1: 4, 2: 1, 5: 8, 6: 16}
+                elements = {1: SortedSet(), 2: SortedSet(), 4: SortedSet(),
+                            8: SortedSet(), 16: SortedSet(), 32: SortedSet()}
+                duplicates = {1: set(), 2: set(), 4: set(), 8: set(), 16: set(), 32: set()}
+                tx_filters = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16: dict(), 32: set()}
+                n_type_map_filter_type = {0: 2, 1: 4, 2: 1, 5: 8, 6: 16, 9: 32}
 
                 for i in sorted(block["tx_filters"].keys()):
                     for address in block["tx_filters"][i]:
-                        if address[0] not in (0, 1, 2, 5, 6):
+                        if address[0] not in (0, 1, 2, 5, 6, 9):
                             continue
                         f_type = n_type_map_filter_type[address[0]]
                         if address[0] == 2:

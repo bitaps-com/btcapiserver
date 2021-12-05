@@ -72,9 +72,12 @@ async def outpoints_info(outpoints, app):
         try:
             h, address, amount, s = outpoints_map[i[2]]
             r = dict()
-            if address[0] in (0, 1, 5, 6):
+            if address[0] in (0, 1, 5, 6, 0):
+
                 script_hash = True if address[0] in (1, 6) else False
                 witness_version = None if address[0] < 5 else 0
+                if address[0] == 9:
+                    witness_version = 1
                 try:
                     r["address"] = hash_to_address(address[1:], testnet=app["testnet"],
                                               script_hash=script_hash, witness_version=witness_version)

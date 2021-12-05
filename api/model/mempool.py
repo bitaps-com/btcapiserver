@@ -162,9 +162,11 @@ async def mempool_transactions(limit, page, order, from_timestamp, mode, app):
                     tx_list[t]["vIn"][i]["blockHeight"] = None
                     tx_list[t]["vIn"][i]["confirmations"] = None
 
-                if d["address"][0] in (0, 1, 2, 5, 6):
+                if d["address"][0] in (0, 1, 2, 5, 6, 9):
                     script_hash = True if d["address"][0] in (1, 6) else False
                     witness_version = None if d["address"][0] < 5 else 0
+                    if d["address"][0] == 9:
+                        witness_version = 1
                     try:
                         if d["address"][0] == 2:
                             ad = b"\x02" + parse_script(d["address"][1:])["addressHash"]
@@ -508,9 +510,11 @@ async def invalid_transactions(limit, page, order, from_timestamp, mode, app):
                     tx_list[t]["vIn"][i]["blockHeight"] = None
                     tx_list[t]["vIn"][i]["confirmations"] = None
 
-                if d["address"][0] in (0, 1, 2, 5, 6):
+                if d["address"][0] in (0, 1, 2, 5, 6, 9):
                     script_hash = True if d["address"][0] in (1, 6) else False
                     witness_version = None if d["address"][0] < 5 else 0
+                    if d["address"][0] == 9:
+                        witness_version = 1
                     try:
                         if d["address"][0] == 2:
                             ad = b"\x02" + parse_script(d["address"][1:])["addressHash"]
@@ -892,9 +896,11 @@ async def mempool_doublespend(limit, page, order, from_timestamp, dbs_type, mode
                     tx_list[t]["vIn"][i]["blockHeight"] = None
                     tx_list[t]["vIn"][i]["confirmations"] = None
 
-                if d["address"][0] in (0, 1, 2, 5, 6):
+                if d["address"][0] in (0, 1, 2, 5, 6, 9):
                     script_hash = True if d["address"][0] in (1, 6) else False
                     witness_version = None if d["address"][0] < 5 else 0
+                    if d["address"][0] == 9:
+                        witness_version = 1
                     try:
                         if d["address"][0] == 2:
                             ad = b"\x02" + parse_script(d["address"][1:])["addressHash"]

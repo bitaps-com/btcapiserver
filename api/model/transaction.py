@@ -119,9 +119,11 @@ async def tx_by_pointer_opt_tx(pointer, option_raw_tx, app):
                     tx["inputsAmount"] += r["amount"]
                     tx["vIn"][i]["blockHeight"] = r["pointer"] >> 39
                     tx["vIn"][i]["confirmations"] = app["last_block"] - (r["pointer"] >> 39) + 1
-                    if r["address"][0] in (0,1,5,6):
+                    if r["address"][0] in (0,1,5,6,9):
                         script_hash = True if r["address"][0] in (1, 6) else False
                         witness_version = None if r["address"][0] < 5 else 0
+                        if r["address"][0] == 9:
+                            witness_version = 1
                         tx["vIn"][i]["address"] = hash_to_address(r["address"][1:],
                                                                   testnet=app["testnet"],
                                                                   script_hash = script_hash,
