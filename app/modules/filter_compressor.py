@@ -52,7 +52,7 @@ class FilterCompressor():
         self.log.info("batch compressor started")
 
         try:
-            n_type_map_filter_type = {0: 2, 1: 4, 2: 1, 5: 8, 6: 16} # map script type to filter type
+            n_type_map_filter_type = {0: 2, 1: 4, 2: 1, 5: 8, 6: 16, 9:32} # map script type to filter type
 
             tts = 0
             batch_size = self.batch_size
@@ -61,10 +61,10 @@ class FilterCompressor():
             last_height = - 1
             total_elements_count, total_elements_size = 0, 0
             total_duplicates_count, total_duplicates_size = 0, 0
-            last_hash = {1: None, 2: None, 4: None, 8: None,  16: None}
-            batch_map = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16: dict()}
+            last_hash = {1: None, 2: None, 4: None, 8: None,  16: None, 32: None}
+            batch_map = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16: dict(), 32: dict()}
             records = deque()
-            element_index = {1: 0, 2: 0, 4: 0, 8: 0, 16: 0}
+            element_index = {1: 0, 2: 0, 4: 0, 8: 0, 16: 0, 32: 0}
             while True:
                 try:
                     # load last filters hash
@@ -121,15 +121,16 @@ class FilterCompressor():
                                     raise Exception("block filters filed")
                     elements_count, elements_size = 0, 0
                     duplicates_count, duplicates_size = 0, 0
-                    batch_map = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16: dict()}
+                    batch_map = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16: dict(), 32: dict()}
                     records = deque()
-                    element_index = {1: 0, 2: 0, 4: 0, 8: 0, 16: 0}
+                    element_index = {1: 0, 2: 0, 4: 0, 8: 0, 16: 0, 32:0}
 
                     for block in blocks:
                         raw_elements = {1: SortedSet(), 2: SortedSet(),
-                                        4: SortedSet(), 8: SortedSet(), 16: SortedSet()}
-                        duplicates = {1: set(), 2: set(), 4: set(), 8: set(), 16:set()}
-                        tx_filters = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16:dict()}
+                                        4: SortedSet(), 8: SortedSet(), 16: SortedSet(),
+                                        32: SortedSet()}
+                        duplicates = {1: set(), 2: set(), 4: set(), 8: set(), 16:set(), 32: set()}
+                        tx_filters = {1: dict(), 2: dict(), 4: dict(), 8: dict(), 16:dict(), 32: dict()}
                         if last_height + 1 != block["height"]:
                             print("---->")
                             print(last_height, block["height"])
@@ -148,7 +149,7 @@ class FilterCompressor():
                                 break
                             if i > len(block["filter"]):
                                 raise Exception("Block filter invalid")
-                            l = 20 if block["filter"][i] != 6 else 32
+                            l = 20 if block["filter"][i] not in  (6, 9) else 32
                             uq.add(block["filter"][i:i + 5 + l])
                             i += 5 + l
 
