@@ -15,6 +15,8 @@ from utils import PARAMETER_ERROR
 from utils import JSON_DECODE_ERROR
 from utils import INVALID_BLOCK_POINTER
 
+ADDRESS_TYPES =(0, 1, 5, 6, 9)
+
 async def get_address_state_by_list(request):
     log = request.app["log"]
     log.info("POST %s" % str(request.rel_url))
@@ -44,7 +46,7 @@ async def get_address_state_by_list(request):
             for address in data:
                 origin = address
                 addr_type = address_type(address, num=True)
-                if addr_type in (0, 1, 5, 6):
+                if addr_type in ADDRESS_TYPES:
                     address_net = address_net_type(address)
                     if address_net == "testnet" and not request.app["testnet"]:
                         raise APIException(PARAMETER_ERROR, "testnet address is invalid for mainnet")

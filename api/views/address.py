@@ -15,6 +15,7 @@ from utils import APIException
 from utils import INTERNAL_SERVER_ERROR
 from utils import PARAMETER_ERROR
 
+ADDRESS_TYPES =(0, 1, 5, 6, 9)
 
 async def get_address_state(request):
     log = request.app["log"]
@@ -38,7 +39,7 @@ async def get_address_state(request):
         pass
 
     try:
-        if addr_type in (0, 1, 5, 6):
+        if addr_type in ADDRESS_TYPES:
             address_net = address_net_type(address)
             if address_net == "testnet" and not request.app["testnet"]:
                 raise APIException(PARAMETER_ERROR, "testnet address is invalid for mainnet")
@@ -121,7 +122,7 @@ async def get_address_confirmed_utxo(request):
     except:
         page = 1
     try:
-        if addr_type in (0, 1, 5, 6):
+        if addr_type in ADDRESS_TYPES:
             address_net = address_net_type(address)
             if address_net == "testnet" and not request.app["testnet"]:
                 raise APIException(PARAMETER_ERROR, "testnet address is invalid for mainnet")
@@ -191,7 +192,7 @@ async def get_address_unconfirmed_utxo(request):
         page = 1
 
     try:
-        if addr_type in (0, 1, 5, 6):
+        if addr_type in ADDRESS_TYPES:
             address_net = address_net_type(address)
             if address_net == "testnet" and not request.app["testnet"]:
                 raise APIException(PARAMETER_ERROR, "testnet address is invalid for mainnet")
@@ -244,7 +245,7 @@ async def get_address_state_extended(request):
         pass
 
     try:
-        if addr_type in (0, 1, 5, 6):
+        if addr_type in ADDRESS_TYPES:
             address_net = address_net_type(address)
             if address_net == "testnet" and not request.app["testnet"]:
                 raise APIException(PARAMETER_ERROR, "testnet address is invalid for mainnet")
@@ -481,7 +482,7 @@ async def get_address_transactions(request):
         timeline = False
 
     try:
-        if addr_type in (0, 1, 5, 6):
+        if addr_type in ADDRESS_TYPES:
             address_net = address_net_type(address)
             if address_net == "testnet" and not request.app["testnet"]:
                 raise APIException(PARAMETER_ERROR, "testnet address is invalid for mainnet")
@@ -559,7 +560,7 @@ async def get_address_unconfirmed_transactions(request):
         mode = "brief"
 
     try:
-        if addr_type in (0, 1, 5, 6):
+        if addr_type in ADDRESS_TYPES:
             address_net = address_net_type(address)
             if address_net == "testnet" and not request.app["testnet"]:
                 raise APIException(PARAMETER_ERROR, "testnet address is invalid for mainnet")
