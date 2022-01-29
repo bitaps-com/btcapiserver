@@ -673,6 +673,7 @@ async def address_transactions(address,  type, limit, page, order, mode, timelin
                 tx_list[i]["vIn"][k]["scriptPubKeyOpcodes"] = decode_script(tx_list[i]["vIn"][k]["scriptPubKey"])
                 tx_list[i]["vIn"][k]["scriptPubKeyAsm"] = decode_script(tx_list[i]["vIn"][k]["scriptPubKey"], 1)
                 for ti in target_scripts[i]:
+                    print(ti, tx_list[i]["vIn"][k]["scriptPubKey"])
                     if ti == tx_list[i]["vIn"][k]["scriptPubKey"]:
                         target_scripts[i][ti]["s"] += tx_list[i]["vIn"][k]["amount"]
                         target_scripts[i][ti]["i"] += 1
