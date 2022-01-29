@@ -615,6 +615,7 @@ async def address_transactions(address,  type, limit, page, order, mode, timelin
 
         tx_list.append(tx)
         ts = dict()
+        print(a)
         for d in a:
             if d[0] in (0, 1, 5, 6, 9):
                 ts[hash_to_script(d[1:], d[0], hex=True)] = {"r": 0, "s": 0, "i": 0, "o": 0}
