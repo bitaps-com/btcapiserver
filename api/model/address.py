@@ -615,7 +615,6 @@ async def address_transactions(address,  type, limit, page, order, mode, timelin
 
         tx_list.append(tx)
         ts = dict()
-        print(a)
         for d in a:
             if d[0] in (0, 1, 5, 6, 9):
                 ts[hash_to_script(d[1:], d[0], hex=True)] = {"r": 0, "s": 0, "i": 0, "o": 0}
@@ -674,7 +673,6 @@ async def address_transactions(address,  type, limit, page, order, mode, timelin
                 tx_list[i]["vIn"][k]["scriptPubKeyOpcodes"] = decode_script(tx_list[i]["vIn"][k]["scriptPubKey"])
                 tx_list[i]["vIn"][k]["scriptPubKeyAsm"] = decode_script(tx_list[i]["vIn"][k]["scriptPubKey"], 1)
                 for ti in target_scripts[i]:
-                    print(ti, tx_list[i]["vIn"][k]["scriptPubKey"])
                     if ti == tx_list[i]["vIn"][k]["scriptPubKey"]:
                         target_scripts[i][ti]["s"] += tx_list[i]["vIn"][k]["amount"]
                         target_scripts[i][ti]["i"] += 1
@@ -773,9 +771,7 @@ async def address_transactions(address,  type, limit, page, order, mode, timelin
 
     if timeline and tx_list:
         tx_pointer= (tx_list[-1]["blockHeight"] << 39) + (tx_list[-1]["blockIndex"] << 20)
-        print(tx_list[-1]["blockHeight"])
         r = await address_state_extended_in_pointer(a, tx_pointer, app)
-        print(r)
         state = {"receivedAmount": r['data']["receivedAmount"],
                  "receivedTxCount": r['data']["receivedTxCount"],
                  "sentAmount": r['data']["sentAmount"],
