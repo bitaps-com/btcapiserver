@@ -226,7 +226,8 @@ async def get_address_state_extended(request):
     log = request.app["log"]
     address = request.match_info['address']
     addr_type = address_type(address, num=True)
-    log.info("get address extended state  %s" % str(request.rel_url))
+
+    log.info("get address extended state [%s] %s" % (addr_type, str(request.rel_url)))
 
     status = 500
     response = {"error_code": INTERNAL_SERVER_ERROR,
