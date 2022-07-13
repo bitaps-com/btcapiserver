@@ -15,7 +15,8 @@ from utils import APIException
 from utils import INTERNAL_SERVER_ERROR
 from utils import PARAMETER_ERROR
 
-ADDRESS_TYPES =(0, 1, 5, 6, 9)
+ADDRESS_TYPES = (0, 1, 5, 6, 9)
+
 
 async def get_address_state(request):
     log = request.app["log"]
