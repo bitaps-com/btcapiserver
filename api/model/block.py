@@ -177,7 +177,7 @@ async def block_data_by_pointer(pointer, stat, app):
         cb = await conn.fetchval("SELECT raw_transaction  "
                                 "FROM transaction  WHERE pointer = $1  LIMIT 1;",  block["height"] << 39)
         tx = Transaction(cb, format="raw")
-        block["estimatedBlockReward"] = 50 * 100000000 >> block["height"] // 210000
+        block["estimatedBlockReward"] = 50 * 100000000 >> block["height"] // 840000
         block["blockReward"] = tx["amount"]
         if tx["amount"] > block["estimatedBlockReward"]:
             block["blockReward"] = block["estimatedBlockReward"]
