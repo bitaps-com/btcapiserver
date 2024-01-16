@@ -160,7 +160,7 @@ async def  data_last_n_blocks(n, app):
 
         tx = cb_map[block["height"]]
 
-        block["estimatedBlockReward"] = 50 * 100000000 >> block["height"] // 210000
+        block["estimatedBlockReward"] = 50 * 100000000 >> block["height"] // 840000
         block["blockReward"] = tx["amount"]
         if tx["amount"] > block["estimatedBlockReward"]:
             block["blockReward"] = block["estimatedBlockReward"]
@@ -250,7 +250,7 @@ async def  blocks_data_last_n_hours(n, app):
 
         tx = cb_map[block["height"]]
 
-        block["estimatedBlockReward"] = 50 * 100000000 >> block["height"] // 210000
+        block["estimatedBlockReward"] = 50 * 100000000 >> block["height"] // 840000
         block["blockReward"] = tx["amount"]
         if tx["amount"] > block["estimatedBlockReward"]:
             block["blockReward"] = block["estimatedBlockReward"]
@@ -350,7 +350,7 @@ async def  data_blocks_daily(day, app):
 
         tx = cb_map[block["height"]]
 
-        block["estimatedBlockReward"] = 50 * 100000000 >> block["height"] // 210000
+        block["estimatedBlockReward"] = 50 * 100000000 >> block["height"] // 840000
         block["blockReward"] = tx["amount"]
         if tx["amount"] > block["estimatedBlockReward"]:
             block["blockReward"] = block["estimatedBlockReward"]

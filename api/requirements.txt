@@ -1,12 +1,12 @@
 jinja2>=2.10.1
-aiohttp
+aiohttp==3.8.4
 aiohttp_jinja2==1.0.0
 pytz==2018.5
-asyncpg==0.16.0
+asyncpg==0.27.0
 setproctitle
 colorlog==3.1.4
 python-json-logger==0.1.9
-git+https://github.com/bitaps-com/pybtc@no_analityca
+git+https://github.com/bitaps-com/pybtc
 git+https://github.com/bitaps-com/pyltc
 git+https://github.com/bitaps-com/aiojsonrpc
 pyzmq
