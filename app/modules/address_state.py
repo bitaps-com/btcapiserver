@@ -400,7 +400,10 @@ class AddressState():
                                             for amount in after_block_balance.values():
                                                 if amount < 0:
                                                     print(amount)
-                                                key = 'null' if amount == 0 else str(floor(log10(amount)))
+                                                try:
+                                                    key = 'null' if amount == 0 else str(floor(log10(amount)))
+                                                except:
+                                                    key = 'null'
                                                 try:
                                                     blockchain_stat["amountMap"][key]["amount"] += amount
                                                     blockchain_stat["amountMap"][key]["count"] += 1
@@ -411,7 +414,10 @@ class AddressState():
                                                 if v[0] == 0:
                                                     continue
                                                 amount = v[1]
-                                                key = 'null' if amount == 0 else str(floor(log10(amount)))
+                                                try:
+                                                    key = 'null' if amount == 0 else str(floor(log10(amount)))
+                                                except:
+                                                    key = 'null'
                                                 blockchain_stat["amountMap"][key]["amount"] -= amount
                                                 blockchain_stat["amountMap"][key]["count"] -= 1
                                             block_stat_records.append((ihl, json.dumps(block_stat)))
