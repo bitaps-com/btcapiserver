@@ -348,6 +348,7 @@ class App:
                 return
             except Exception as err:
                 self.log.error("Synchronization completed handler: %s" % err)
+                print(traceback.format_exc())
                 await asyncio.sleep(10)
 
 

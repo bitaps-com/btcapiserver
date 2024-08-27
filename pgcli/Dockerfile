@@ -1,8 +1,12 @@
-FROM ubuntu:18.04
-MAINTAINER Aleksey Karpov <admin@bitaps.com>
-RUN apt-get -y update && apt-get -y install libpq-dev build-essential
-RUN apt-get -y install python-pip
-RUN pip install pgcli==2.0.2
-RUN pip install psycopg2-binary
+FROM ubuntu:20.04
+ENV TZ=Europe/Moscow
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+RUN apt-get update
+RUN apt-get -y install python3
+RUN apt-get -y install python3-pip
+RUN apt-get -y install python-dev libpq-dev libevent-dev
+RUN pip3 install pgcli
+
 RUN mkdir /var/run/postgresql
 ENTRYPOINT ["pgcli"]

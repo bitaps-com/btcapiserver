@@ -74,7 +74,6 @@ class FilterCompressor():
 
                         block_filters_bootstrap_wait = await conn.fetchval("SELECT value FROM service "
                                                                   "WHERE name = 'block_filters_bootstrap' LIMIT 1;")
-                        print("block_filters_bootstrap", block_filters_bootstrap_wait)
                         h = await conn.fetchval("SELECT height FROM block_filter  ORDER BY height DESC LIMIT 1;")
                         if h is not None:
                             last_batch_height = (h // batch_size) * batch_size
@@ -83,7 +82,6 @@ class FilterCompressor():
                             rows = await conn.fetch("SELECT type, hash FROM block_filter where height = $1;", h)
                             for row in rows:
                                 last_hash[row["type"]] = row["hash"]
-                        print("last height", last_height)
 
                         if last_height >=0 and h != last_height:
                             data = {'last_hash': last_hash,
@@ -107,10 +105,8 @@ class FilterCompressor():
                                                   "and raw_block_filters.height <= $2 "
                                                   "ORDER BY raw_block_filters.height;",
                                                   last_height, last_height + batch_size)
-                    print("last_height", last_height, "last_height + batch_size", last_height + batch_size, len(blocks) )
 
                     if len(blocks) != batch_size:
-                        print(block_filters_bootstrap_wait)
                         if not bool(int(block_filters_bootstrap_wait)):
                             await asyncio.sleep(10)
                             continue
@@ -121,7 +117,6 @@ class FilterCompressor():
                                 t = await conn.fetchval("SELECT count(height) FROM raw_block_filters;")
                                 if t !=  len(blocks):
                                     raise Exception("block filters filed")
-                            print(">>")
                     elements_count, elements_size = 0, 0
                     duplicates_count, duplicates_size = 0, 0
 

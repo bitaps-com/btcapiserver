@@ -1,4 +1,4 @@
-pyzmq==17.0.0
+pyzmq
 uvloop==0.17.0
 setproctitle==1.1.10
 configparser==3.5.0
