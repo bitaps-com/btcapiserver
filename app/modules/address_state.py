@@ -12,6 +12,7 @@ import time
 import json
 from math import *
 import sys
+from pybtc import *
 
 
 class AddressState():
@@ -106,8 +107,7 @@ class AddressState():
         height = -1
         previous_height = -1
         last_block_height = -1
-        limit = 200
-        debug = 1
+        limit = 400
         next_batch = None
         address_cache = self.address_cache
         affected_new = self.affected_new
@@ -120,7 +120,6 @@ class AddressState():
 
         while True:
             try:
-
                 qt = time.time()
 
                 ql = time.time()
@@ -159,22 +158,31 @@ class AddressState():
                         else:
                             height = last_block_height
 
-                    if height + limit > max_h:
-                        limit = max_h - height - 1
+                    # tail of last 10 blocks handle one be one
+                    if height + limit >= max_h - 10:
+                        limit = max_h - height - 1 - 10
+                    if limit < 10: limit = 0
 
                 if next_batch is None:
-                    stxo, utxo, ustxo, height, recent_limit = await self.get_records(height, limit)
+                    if height >= max_h:
+                        stxo, utxo, ustxo, height, recent_limit = None, None, None, height, limit
+                    else:
+                        stxo, utxo, ustxo, height, recent_limit = await self.get_records(height, limit)
                 else:
                     await next_batch
                     stxo, utxo, ustxo, height, recent_limit = next_batch.result()
                 last_block_height = height + 1 + recent_limit
                 first_block_height = height + 1
 
-                if last_block_height + limit > max_h:
-                    limit = last_block_height - height - 1
+                # tail of last 10 blocks handle one be one
+                if last_block_height + limit >= max_h - 10:
+                    limit = max_h - last_block_height - 1 - 10
+
                 if last_block_height > max_h:
                     last_block_height = max_h
-                next_batch = self.loop.create_task(self.get_records(last_block_height, limit))
+
+                if limit >= 10:
+                     next_batch = self.loop.create_task(self.get_records(last_block_height, limit))
 
                 ql = round(time.time() - ql, 2)
 
@@ -185,7 +193,7 @@ class AddressState():
                     except:
                         pass
                     next_batch = None
-                    limit = 1
+                    limit = 0
                     async with self.db_pool.acquire() as conn:
                         i = await conn.fetchval("select count(*)  from pg_indexes"
                                                 " where  indexname = 'address_rich_list'")
@@ -194,6 +202,11 @@ class AddressState():
                             await conn.fetchval("CREATE INDEX IF NOT EXISTS  "
                                                 " address_rich_list ON address (balance DESC);")
                             self.log.warning("Create index on address completed")
+                    # clear cache
+                    self.address_cache.clear()
+                    self.affected_existed.clear()
+                    self.affected_new.clear()
+                    self.missed_addresses = set()
                     await asyncio.sleep(1)
 
                     continue
@@ -530,7 +543,7 @@ class AddressState():
                 qs = round(time.time() - qs, 2)
 
                 qt = round(time.time() - qt, 2)
-                self.log.debug(
+                self.log.info(
                     "Address state processor round %s; Get records %s; Load addresses %s; Computation %s; Save %s" % (
                     qt, ql, qg, qc, qs))
                 self.log.info("Address state/analytica +%s blocks; last block %s;" % (last_block_height -
@@ -550,7 +563,15 @@ class AddressState():
                 self.affected_existed.clear()
                 self.affected_new.clear()
                 self.missed_addresses = set()
+                block_stat_records = []
                 height = -1
+
+                try:
+                    commit.cancel()
+                    await commit
+                except:
+                    pass
+
                 commit_task = False
                 next_batch = None
                 self.log.error("Addresses state task error: %s" % err)
